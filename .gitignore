@@ -1,0 +1,39 @@
+# venv
+.venv/
+env/
+venv/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+.dist/
+build/
+.eggs/
+
+# IDE
+.vscode/
+.idea/
+
+# Local data / secrets
+.env
+*.sqlite3
+*.db
+*.db-journal
+*.sqlite-shm
+*.sqlite-wal
+logs/
+*.log
+
+# Cache
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.cache/
+
+# OS
+.DS_Store
+Thumbs.db

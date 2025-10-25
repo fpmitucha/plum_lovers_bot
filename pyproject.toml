@@ -1,0 +1,15 @@
+[project]
+name = "innopls-bot"
+version = "0.1.0"
+requires-python = ">=3.11"
+description = "Telegram bot (aiogram v3) for PLS group onboarding with admin approval & invite validation"
+authors = [{ name = "PLS Bot" }]
+
+[project.dependencies]
+aiogram = "^3.13.1"
+pydantic = "^2.8.2"
+SQLAlchemy = "^2.0.35"
+python-dotenv = "^1.0.1"
+
+[tool.ruff]
+line-length = 100
