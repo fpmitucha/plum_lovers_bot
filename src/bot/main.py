@@ -38,7 +38,7 @@ async def set_bot_commands(bot: Bot) -> None:
     await bot.set_my_commands(
         commands=[
             BotCommand(command="start", description="Начать"),
-            BotCommand(command="stats", description="Статистика моей кармы"),  # ← добавлено
+            BotCommand(command="stats", description="Статистика моей кармы"),
             # BotCommand(command="admin", description="Админ-панель"),
         ]
     )
@@ -87,23 +87,23 @@ async def main():
     )
     dp = Dispatcher()
 
-    # Регистрируем роутеры
+    # ПОРЯДОК ВАЖЕН: карма — до админских ловушек
     dp.include_router(help_member.router)
     dp.include_router(start_handlers.router)
     dp.include_router(join_handlers.router)
+
+    dp.include_router(karma_auto_router)             # ← приоритетно
+
     dp.include_router(admin_handlers.router)
     dp.include_router(chat_member_handlers.router)
     dp.include_router(cleanup_handlers.router)
     dp.include_router(cabinet_handlers.router)
     dp.include_router(admin_karma.router)
     dp.include_router(top_router)
-    dp.include_router(karma_auto_router)
 
-    # Инициализируем БД и стартовые хуки
     engine = create_engine(settings.DATABASE_URL)
     await on_startup(dp, bot, engine)
 
-    # Запускаем поллинг
     logger.info("Bot is up. Starting polling...")
     allowed_updates = [
         "message",
@@ -113,7 +113,6 @@ async def main():
         "message_reaction",
         "message_reaction_count",
     ]
-
     await dp.start_polling(bot, allowed_updates=allowed_updates)
 
 

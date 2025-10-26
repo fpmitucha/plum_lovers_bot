@@ -24,6 +24,7 @@ from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command
 from aiogram.filters.callback_data import CallbackData
+from aiogram.filters.command import CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.types import Message, CallbackQuery, InlineKeyboardButton
@@ -42,6 +43,9 @@ MAIN_ADMIN_ID = 8421106062
 
 # Размер страницы
 PAGE_SIZE = 20
+
+# Фильтр «не команда» — игнорируем всё, что начинается с «/»
+NO_COMMAND = (~F.text.regexp(r"^\s*/")) & (~F.caption.regexp(r"^\s*/"))
 
 
 class AdmCB(CallbackData, prefix="adm2"):
@@ -305,7 +309,7 @@ async def cb_roster_add(cb: CallbackQuery, state: FSMContext, session_maker: asy
     await cb.answer()
 
 
-@router.message(AdminStates.waiting_roster_slug)
+@router.message(AdminStates.waiting_roster_slug, NO_COMMAND, (F.text | F.caption))
 async def on_roster_slug(
     message: Message,
     state: FSMContext,
@@ -372,7 +376,7 @@ async def cb_roster_edit(
     await cb.answer()
 
 
-@router.message(AdminStates.waiting_edit_slug)
+@router.message(AdminStates.waiting_edit_slug, NO_COMMAND, (F.text | F.caption))
 async def on_roster_edit_slug(
     message: Message,
     state: FSMContext,
@@ -494,7 +498,7 @@ async def _render_search_results(
     await _safe_edit_or_answer(message, text=text, kb=kb)
 
 
-@router.message(AdminStates.waiting_search_query)
+@router.message(AdminStates.waiting_search_query, NO_COMMAND, (F.text | F.caption))
 async def on_search_query(
     message: Message,
     state: FSMContext,
@@ -623,7 +627,7 @@ async def cb_admin_add(cb: CallbackQuery, state: FSMContext) -> None:
     await cb.answer()
 
 
-@router.message(AdminStates.waiting_admin_user_id)
+@router.message(AdminStates.waiting_admin_user_id, NO_COMMAND, (F.text | F.caption))
 async def on_admin_add_user_id(
     message: Message,
     state: FSMContext,
@@ -664,7 +668,7 @@ async def cb_admin_del(cb: CallbackQuery, state: FSMContext) -> None:
     await cb.answer()
 
 
-@router.message(AdminStates.waiting_admin_del_user_id)
+@router.message(AdminStates.waiting_admin_del_user_id, NO_COMMAND, (F.text | F.caption))
 async def on_admin_del_user_id(
     message: Message,
     state: FSMContext,
@@ -694,3 +698,40 @@ async def on_admin_del_user_id(
 
     await state.clear()
     await message.answer(f"🗑 Пользователь {uid} удалён из администраторов. /admin")
+
+
+# ---------- Команды во время админских состояний: сброс состояния + проброс /stats ----------
+
+@router.message(
+    AdminStates.waiting_roster_slug, Command()
+)
+@router.message(
+    AdminStates.waiting_search_query, Command()
+)
+@router.message(
+    AdminStates.waiting_edit_slug, Command()
+)
+@router.message(
+    AdminStates.waiting_admin_user_id, Command()
+)
+@router.message(
+    AdminStates.waiting_admin_del_user_id, Command()
+)
+async def admin_states_any_command(
+    message: Message,
+    state: FSMContext,
+    session_maker: async_sessionmaker[AsyncSession],
+    command: CommandObject,
+) -> None:
+    # Сбрасываем состояние, чтобы не «съедать» команды
+    await state.clear()
+    cmd = (command.command or "").lower()
+
+    if cmd == "stats":
+        # Пробрасываем в хендлер кармы
+        from bot.handlers.karma_auto import cmd_stats
+        await cmd_stats(message, session_maker)  # type: ignore[arg-type]
+        return
+
+    # По другим командам просто сообщим, что ввод прерван
+    await message.answer("⏹️ Ввод прерван. Команда обработана. Если не сработало — отправьте её ещё раз.")
