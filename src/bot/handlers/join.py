@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import html
 import logging
+import contextlib
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Union
@@ -134,6 +135,29 @@ async def _revoke_active_invite(bot, repo: Repo, user_id: int) -> None:
     except Exception:
         pass
     await repo.delete_invite(inv.id)
+
+async def _close_admin_request_message(cb: CallbackQuery, notice: str | None = None) -> None:
+    """
+    Спрятать «карточку» заявки из админского чата:
+    1) пробуем удалить сообщение;
+    2) если нельзя — снимаем клавиатуру / меняем текст;
+    3) закрываем «часики» на кнопке.
+    """
+    # 1) Удалить целиком
+    with contextlib.suppress(Exception):
+        await cb.message.delete()
+        with contextlib.suppress(Exception):
+            await cb.answer()
+        return
+    # 2) Иначе — убрать клавиатуру или заменить текст
+    with contextlib.suppress(Exception):
+        if notice:
+            await cb.message.edit_text(notice, reply_markup=None)
+        else:
+            await cb.message.edit_reply_markup(reply_markup=None)
+    # 3) Закрыть спиннер
+    with contextlib.suppress(Exception):
+        await cb.answer()
 
 # ---- HANDLERS: USER FLOW ----
 @router.callback_query(JoinCB.filter(F.action == "start"))
@@ -335,13 +359,20 @@ async def on_admin_approved(
     Если пользователь уже в чате — сразу ставим done, создаём профиль/roster,
     отзы́ваем активные ссылки и шлём ему уведомление без «правил».
     Иначе — обычный поток: статус approved и карточка с правилами.
+
+    В любом случае текущая «карточка» заявки у администратора скрывается.
     """
     app_id = int(callback_data.app_id or 0)
     async with session_maker() as session:
         repo = Repo(session)
         app = await repo.get_application(app_id)
         if not app:
-            await cb.answer("Заявка не найдена.", show_alert=True)
+            await _close_admin_request_message(cb, "Заявка уже обработана или не найдена.")
+            return
+
+        # если уже не pending — просто закрыть карточку
+        if (app.status or "").lower() != "pending":
+            await _close_admin_request_message(cb)
             return
 
         already_member = await _is_already_in_target_chat(cb.bot, app.user_id)
@@ -349,28 +380,25 @@ async def on_admin_approved(
         if already_member:
             await repo.set_application_status(app_id, status="done")
             await repo.ensure_profile(user_id=app.user_id, username=app.username, slug=app.slug)
-            try:
+            with contextlib.suppress(Exception):
                 await repo.add_to_roster(app.slug)
-            except Exception:
-                pass
             await _revoke_active_invite(cb.bot, repo, app.user_id)
-        else:
-            await repo.set_application_status(app_id, status="approved")
 
-    if already_member:
-        lang = get_lang(app.user_id) or "ru"
-        msg = {
-            "ru": "Заявка отмечена выполненной: вы уже состоите в чате ✅\nОткройте /menu — «Личный кабинет» доступен.",
-            "en": "Your application has been marked done: you are already in the chat ✅\nOpen /menu — your Profile is available.",
-        }[lang]
-        try:
-            await cb.bot.send_message(chat_id=app.user_id, text=msg)
-        except Exception:
-            pass
-        await cb.answer("Пометил done — пользователь уже в чате.")
-        return
+            # уведомим пользователя
+            lang = get_lang(app.user_id) or "ru"
+            msg = {
+                "ru": "Заявка отмечена выполненной: вы уже состоите в чате ✅\nОткройте /menu — «Личный кабинет» доступен.",
+                "en": "Your application has been marked done: you are already in the chat ✅\nOpen /menu — your Profile is available.",
+            }[lang]
+            with contextlib.suppress(Exception):
+                await cb.bot.send_message(chat_id=app.user_id, text=msg)
 
-    # ---- обычный approve ----
+            await _close_admin_request_message(cb)
+            return
+
+        # ---- обычный approve ----
+        await repo.set_application_status(app_id, status="approved")
+
     lang = get_lang(app.user_id) or "ru"
     caption = {
         "ru": (
@@ -398,7 +426,7 @@ async def on_admin_approved(
         ]]
     )
 
-    try:
+    with contextlib.suppress(Exception):
         await cb.bot.send_photo(
             chat_id=app.user_id,
             photo=_resolve_photo_source(APPROVE_BANNER[lang]),
@@ -406,10 +434,9 @@ async def on_admin_approved(
             parse_mode=ParseMode.HTML,
             reply_markup=kb,
         )
-    except Exception:
-        await cb.bot.send_message(chat_id=app.user_id, text=caption, parse_mode=ParseMode.HTML, reply_markup=kb)
 
-    await cb.answer("Отправлено пользователю.")
+    # скрываем карточку у нажавшего админа
+    await _close_admin_request_message(cb)
 
 @router.callback_query(AdminCB.filter(F.action == "deny"))
 async def on_admin_deny_click(
@@ -418,13 +445,23 @@ async def on_admin_deny_click(
     state: FSMContext,
     session_maker: async_sessionmaker[AsyncSession],
 ) -> None:
+    """
+    Отказ по заявке: карточка сразу скрывается у админа, затем спрашиваем причину.
+    """
     app_id = int(callback_data.app_id or 0)
     async with session_maker() as session:
         repo = Repo(session)
         app = await repo.get_application(app_id)
         if not app:
-            await cb.answer("Заявка не найдена.", show_alert=True)
+            await _close_admin_request_message(cb, "Заявка уже обработана или не найдена.")
             return
+        # если уже не pending — просто закрыть карточку
+        if (app.status or "").lower() != "pending":
+            await _close_admin_request_message(cb)
+            return
+
+    # прячем карточку сразу
+    await _close_admin_request_message(cb)
 
     await state.set_state(AdminStates.waiting_deny_reason)
     await state.update_data(app_id=app_id)
@@ -434,7 +471,6 @@ async def on_admin_deny_click(
         "Если хотите отправить без причины — пришлите дефис «-».",
         parse_mode=ParseMode.HTML,
     )
-    await cb.answer()
 
 @router.message(AdminStates.waiting_deny_reason)
 async def on_admin_deny_reason(
@@ -463,15 +499,13 @@ async def on_admin_deny_reason(
             "en": "Your application was rejected by an administrator.\n\n<i>Reason:</i>\n{reason}",
         }[lang].format(reason=html.escape(reason_raw) if reason_to_save else "—")
 
-        try:
+        with contextlib.suppress(Exception):
             await message.bot.send_photo(
                 chat_id=app.user_id,
                 photo=_resolve_photo_source(DENY_BANNER[lang]),
                 caption=caption,
                 parse_mode=ParseMode.HTML,
             )
-        except Exception:
-            await message.bot.send_message(chat_id=app.user_id, text=caption, parse_mode=ParseMode.HTML)
 
     await state.clear()
     await message.answer("Отправлено пользователю ✅")
@@ -520,10 +554,8 @@ async def on_rules_accepted(
         if await _is_already_in_target_chat(cb.bot, app.user_id):
             await repo.set_application_status(app_id, status="done")
             await repo.ensure_profile(user_id=app.user_id, username=app.username, slug=app.slug)
-            try:
+            with contextlib.suppress(Exception):
                 await repo.add_to_roster(app.slug)
-            except Exception:
-                pass
             await _revoke_active_invite(cb.bot, repo, app.user_id)
 
             lang = get_lang(app.user_id) or "ru"
@@ -535,7 +567,7 @@ async def on_rules_accepted(
             await cb.answer()
             return
 
-        # обычная логика: создаём персональную ссылку
+        # обычная логика: задаём персональную ссылку
         if await repo.has_active_invite(cb.from_user.id):
             await cb.message.answer("У вас уже есть активная персональная ссылка. Проверьте предыдущие сообщения.")
             await cb.answer()
@@ -581,14 +613,12 @@ async def on_rules_accepted(
         ),
     }[lang]
 
-    try:
+    with contextlib.suppress(Exception):
         await cb.message.answer_photo(
             photo=_resolve_photo_source(LINK_BANNER),
             caption=caption,
             parse_mode=ParseMode.HTML,
         )
-    except Exception:
-        await cb.message.answer(caption, parse_mode=ParseMode.HTML)
 
     await cb.answer()
 
@@ -619,7 +649,7 @@ async def on_member_joined_target_chat(
         await repo.ensure_profile(user_id=user.id, username=user.username, slug=slug)
 
     lang = (get_lang(user.id) or "ru").lower()
-    try:
+    with contextlib.suppress(TelegramBadRequest):
         await ev.bot.send_photo(
             chat_id=user.id,
             photo=_resolve_photo_source(AFTER_LANG_BANNER),
@@ -627,6 +657,3 @@ async def on_member_joined_target_chat(
             parse_mode=ParseMode.HTML,
             reply_markup=_user_menu_kb_join("en" if lang == "en" else "ru"),
         )
-    except TelegramBadRequest:
-        # у пользователя закрыты ЛС — игнорируем
-        pass
