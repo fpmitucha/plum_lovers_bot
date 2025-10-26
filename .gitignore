@@ -1,39 +1,38 @@
-# venv
+# .gitignore
+# venv / python
 .venv/
-env/
-venv/
-
-# Python
 __pycache__/
-*.py[cod]
+*.pyc
 *.pyo
 *.pyd
-*.so
-*.egg-info/
-.dist/
-build/
-.eggs/
+*.log
 
 # IDE
 .vscode/
 .idea/
 
-# Local data / secrets
-.env
+# local data / caches
+*.sqlite
 *.sqlite3
 *.db
 *.db-journal
-*.sqlite-shm
-*.sqlite-wal
-logs/
-*.log
+.cache/
+tmp/
+*.ogg
+*.mp3
+*.wav
 
-# Cache
+# env/secrets
+.env
+.env.*
+.DS_Store
+
+# mypy / pytest / coverage
 .mypy_cache/
 .pytest_cache/
-.ruff_cache/
-.cache/
+.coverage
+htmlcov/
 
-# OS
-.DS_Store
-Thumbs.db
+# aiogram session files (если используешь)
+*.session
+*.session-journal

@@ -18,11 +18,16 @@ from aiogram.client.default import DefaultBotProperties
 
 from bot.config import settings
 from bot.logging_config import setup_logging
+from bot.handlers import help as help_member
 from bot.handlers import start as start_handlers
 from bot.handlers import join as join_handlers
 from bot.handlers import admin as admin_handlers
 from bot.handlers import chat_member as chat_member_handlers
 from bot.handlers import cleanup as cleanup_handlers
+from bot.handlers import cabinet as cabinet_handlers
+from bot.handlers import admin_karma
+from bot.handlers.top import router as top_router
+from bot.handlers.karma_auto import router as karma_auto_router
 
 from bot.utils.db import create_engine, create_session_factory
 from bot.models.models import Base
@@ -33,7 +38,8 @@ async def set_bot_commands(bot: Bot) -> None:
     await bot.set_my_commands(
         commands=[
             BotCommand(command="start", description="Начать"),
-            # BotCommand(command="admin", description="Админ-панель"),  # при желании
+            BotCommand(command="stats", description="Статистика моей кармы"),  # ← добавлено
+            # BotCommand(command="admin", description="Админ-панель"),
         ]
     )
 
@@ -65,8 +71,6 @@ async def on_startup(dp: Dispatcher, bot: Bot, engine):
         await conn.run_sync(Base.metadata.create_all)
 
     session_maker = create_session_factory(engine)
-
-    # ✅ Правильный способ передать зависимости во все хендлеры (aiogram v3):
     dp.workflow_data.update({"session_maker": session_maker})
 
     await set_bot_commands(bot)
@@ -77,19 +81,23 @@ async def main():
     """Основной цикл запуска бота."""
     logger = setup_logging()
 
-    # aiogram ≥ 3.7: parse_mode задаётся через DefaultBotProperties
     bot = Bot(
         token=settings.TELEGRAM_BOT_TOKEN,
-        default=DefaultBotProperties(parse_mode=ParseMode.HTML)
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
     dp = Dispatcher()
 
     # Регистрируем роутеры
+    dp.include_router(help_member.router)
     dp.include_router(start_handlers.router)
     dp.include_router(join_handlers.router)
     dp.include_router(admin_handlers.router)
     dp.include_router(chat_member_handlers.router)
     dp.include_router(cleanup_handlers.router)
+    dp.include_router(cabinet_handlers.router)
+    dp.include_router(admin_karma.router)
+    dp.include_router(top_router)
+    dp.include_router(karma_auto_router)
 
     # Инициализируем БД и стартовые хуки
     engine = create_engine(settings.DATABASE_URL)
@@ -97,7 +105,15 @@ async def main():
 
     # Запускаем поллинг
     logger.info("Bot is up. Starting polling...")
-    allowed_updates = ["message", "callback_query", "chat_member", "my_chat_member"]
+    allowed_updates = [
+        "message",
+        "callback_query",
+        "chat_member",
+        "my_chat_member",
+        "message_reaction",
+        "message_reaction_count",
+    ]
+
     await dp.start_polling(bot, allowed_updates=allowed_updates)
 
 

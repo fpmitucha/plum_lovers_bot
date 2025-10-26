@@ -34,8 +34,8 @@ def _is_join(event: ChatMemberUpdated) -> bool:
         old_status = event.old_chat_member.status
         new_status = event.new_chat_member.status
         return (
-            old_status in {ChatMemberStatus.LEFT, ChatMemberStatus.KICKED}
-            and new_status in {ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR}
+                old_status in {ChatMemberStatus.LEFT, ChatMemberStatus.KICKED}
+                and new_status in {ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR}
         )
     except Exception:
         return False
@@ -125,5 +125,14 @@ async def on_chat_member(event: ChatMemberUpdated, session_maker: async_sessionm
             app = await repo.get_last_application_for_user(joined_user_id)
             if app:
                 await repo.add_to_roster(app.slug)  # идемпотентно
+                try:
+                    await repo.ensure_profile(
+                        user_id=inv.user_id,
+                        username=event.new_chat_member.user.username,
+                        slug=app.slug if app else None,
+                    )
+                except Exception as e:
+                    logging.getLogger("innopls-bot").warning("Не удалось ensure_profile: %s", e)
+
         except Exception as e:
             logging.getLogger("innopls-bot").warning("fallback add_to_roster failed: %s", e)

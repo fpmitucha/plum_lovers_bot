@@ -1,11 +1,8 @@
-# src/bot/models/__init__.py
 """
-Пакет ORM-моделей.
+Модуль экспорта ORM-моделей.
 
-Здесь реэкспортируются все публичные модели, чтобы их можно было
-импортировать кратко: ``from bot.models import Admin, Roster, ...``.
+Предоставляет доступ к базовым классам и моделям для работы с БД.
 """
-
 from .models import (
     Base,
     Roster,
@@ -13,6 +10,7 @@ from .models import (
     Invite,
     Blacklist,
     Admin,
+    Profile,
 )
 
 __all__ = [
@@ -22,4 +20,5 @@ __all__ = [
     "Invite",
     "Blacklist",
     "Admin",
+    "Profile",
 ]

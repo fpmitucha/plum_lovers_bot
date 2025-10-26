@@ -1,22 +1,13 @@
-"""
-Диалог «вступления в PLS» для пользователя.
-
-Шаги:
-1) «Вступить в PLS» — просим ввести slug в формате.
-2) Валидируем slug.
-3) Проверяем:
-   - чёрный список,
-   - уже в реестре (roster),
-   - есть активный инвайт,
-   - есть активная заявка.
-4) Если всё чисто — создаём заявку, уведомляем админов.
-5) Админ: Approve -> пользователю уходит карточка с правилами и баннером.
-6) Админ: Deny -> админ вводит причину, пользователю уходит карточка отказа с причиной и баннером.
-7) Пользователь жмёт «Принимаю правила» — создаём персональный инвайт (1 чел., 24ч)
-   и отправляем карточку со ссылкой и баннером.
-"""
-
 from __future__ import annotations
+"""
+Диалог «вступления в PLS» с авто-завершением заявки, если пользователь уже в чате.
+
+Дополнительно:
+- Анти-дубликат slug (без падений, если метод в Repo отсутствует).
+- ChatMemberStatus.CREATOR (вместо несуществующего OWNER).
+- Отправка главного меню для авторизованного пользователя после фактического вступления
+  (обработчик chat_member).
+"""
 
 import html
 import logging
@@ -25,7 +16,7 @@ from pathlib import Path
 from typing import Union
 
 from aiogram import Router, F
-from aiogram.enums import ParseMode
+from aiogram.enums import ParseMode, ChatMemberStatus
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
@@ -33,23 +24,24 @@ from aiogram.types import (
     CallbackQuery,
     ChatInviteLink,
     ChatMemberAdministrator,
+    ChatMemberUpdated,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     Message,
 )
 from aiogram.types.input_file import FSInputFile
-
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from bot.config import settings
-from bot.keyboards.common import AdminCB, JoinCB, admin_review_kb
+from bot.keyboards.common import AdminCB, JoinCB, admin_review_kb, CabCB
 from bot.services.i18n import get_lang
 from bot.utils.parsing import normalize_slug, parse_slug
-from bot.utils.repo import Repo, now_str
+from bot.utils.repo import Repo
 
 router = Router(name="join")
 
-# ---- БАННЕРЫ ДЛЯ СООБЩЕНИЙ ПОЛЬЗОВАТЕЛЮ ----
+# ---- БАННЕРЫ ----
 APPROVE_BANNER = {
     "ru": "./data/pls_approve_ru_banner_600x400.png",
     "en": "./data/pls_approve_en_banner_600x400.png",
@@ -59,52 +51,94 @@ DENY_BANNER = {
     "en": "./data/pls_deny_en_banner_600x400.png",
 }
 LINK_BANNER = "./data/pls_link_banner_600x400.png"
+AFTER_LANG_BANNER = "./data/pls_afterchangelanguage_banner.png"
 
+# ---- Тексты для меню, которое отправляем после вступления ----
+_MENU_T = {
+    "user_caption": {
+        "ru": (
+            "<b>Привет!</b>\n"
+            "Ты в официальном боте <b>Клуба Любителей Сливов</b>. "
+            "Здесь добро превращается в знания — делимся конспектами, разборами и поддержкой.\n\n"
+            "Что выбираем сегодня? 👇"
+        ),
+        "en": (
+            "<b>Hi!</b>\n"
+            "You’re in the official bot of the <b>Plum Lovers Club</b>. "
+            "Kindness turns into knowledge here — we share notes, breakdowns, and support.\n\n"
+            "What shall we choose today? 👇"
+        ),
+    },
+    "btn_profile":  {"ru": "👤 Личный кабинет", "en": "👤 Profile"},
+    "btn_rules":    {"ru": "🧭 Правила",       "en": "🧭 Rules"},
+    "btn_a2t":      {"ru": "🔊 Аудио в текст", "en": "🔊 Audio to text"},
+    "btn_gpt":      {"ru": "⚡ Chat GPT 5",    "en": "⚡ Chat GPT 5"},
+    "btn_help":     {"ru": "❓ Помощь",        "en": "❓ Help"},
+    "btn_settings": {"ru": "⚙️ Настройки",     "en": "⚙️ Settings"},
+}
+
+def _user_menu_kb_join(lang: str) -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    kb.button(text=_MENU_T["btn_profile"][lang],  callback_data=CabCB(action="open").pack())
+    kb.button(text=_MENU_T["btn_rules"][lang],    callback_data=f"start:rules:{lang}")
+    kb.button(text=_MENU_T["btn_a2t"][lang],      callback_data=f"start:a2t:{lang}")
+    kb.button(text=_MENU_T["btn_gpt"][lang],      callback_data=f"start:gpt:{lang}")
+    kb.button(text=_MENU_T["btn_help"][lang],     callback_data=f"start:help:{lang}")
+    kb.button(text=_MENU_T["btn_settings"][lang], callback_data=f"start:settings:{lang}")
+    kb.adjust(2, 2, 2)
+    return kb.as_markup()
 
 # ---- FSM ----
 class JoinStates(StatesGroup):
-    """Состояния пользователя в процессе вступления."""
     waiting_slug = State()
 
-
 class AdminStates(StatesGroup):
-    """Состояния админа при отклонении заявки (ожидание причины)."""
     waiting_deny_reason = State()
-
 
 # ---- УТИЛИТЫ ----
 def _resolve_photo_source(src: str) -> Union[str, FSInputFile]:
-    """
-    Преобразовать путь/URL/file_id к виду, который понимает Telegram.
-
-    :param src: локальный путь | http(s) URL | 'file_id:AAAA...'
-    :return: str или FSInputFile
-    """
-    if not src:
+    s = (src or "").strip().strip('"').strip("'")
+    if not s:
         raise ValueError("Пустой путь к изображению")
-
-    s = src.strip().strip('"').strip("'")
     if s.startswith("file_id:"):
         return s.split("file_id:", 1)[1].strip()
     if s.startswith(("http://", "https://")):
         return s
-
     p = Path(s).expanduser()
-    if p.exists() and p.is_file():
-        return FSInputFile(p)
+    return FSInputFile(p) if p.exists() and p.is_file() else s
 
-    # Вернём как есть — вдруг это корректный file_id без префикса
-    return s
+async def _is_already_in_target_chat(bot, user_id: int) -> bool:
+    """True, если пользователь уже состоит в целевом чате."""
+    try:
+        cm = await bot.get_chat_member(settings.TARGET_CHAT_ID, user_id)
+        return cm.status in {
+            ChatMemberStatus.MEMBER,
+            ChatMemberStatus.ADMINISTRATOR,
+            ChatMemberStatus.CREATOR,  # важно: CREATOR, не OWNER
+        }
+    except TelegramBadRequest:
+        return False
+    except Exception:
+        return False
 
+async def _revoke_active_invite(bot, repo: Repo, user_id: int) -> None:
+    """Отозвать активную персональную ссылку пользователя (если есть) и удалить запись из БД."""
+    try:
+        inv = await repo.get_active_invite(user_id)
+    except Exception:
+        inv = None
+    if not inv:
+        return
+    try:
+        await bot.revoke_chat_invite_link(settings.TARGET_CHAT_ID, inv.invite_link)
+    except Exception:
+        pass
+    await repo.delete_invite(inv.id)
 
 # ---- HANDLERS: USER FLOW ----
 @router.callback_query(JoinCB.filter(F.action == "start"))
 async def on_join_click(cb: CallbackQuery, state: FSMContext) -> None:
-    """
-    Нажатие «Вступить в PLS» из любых старых экранов.
-    В новых экранах (стартовое меню) вы уже динамически меняете сообщение,
-    но этот хэндлер оставляем на всякий случай: он просто переводит в ожидание slug.
-    """
+    """Переводим пользователя на ввод slug (из любой точки)."""
     if cb.message.chat.type != "private":
         me = await cb.bot.get_me()
         pm_url = f"https://t.me/{me.username}?start=join"
@@ -126,7 +160,6 @@ async def on_join_click(cb: CallbackQuery, state: FSMContext) -> None:
     )
     await cb.answer()
 
-
 @router.message(JoinStates.waiting_slug)
 async def on_slug_received(
     message: Message,
@@ -134,7 +167,11 @@ async def on_slug_received(
     session_maker: async_sessionmaker[AsyncSession],
 ) -> None:
     """
-    Принять и проверить slug, выполнить блокирующие проверки и создать заявку.
+    Принимаем slug. Если пользователь уже в чате — заявка ставится в done, профиль/roster создаются,
+    активная ссылка (если была) отзываетcя. Иначе — обычный поток (заявка pending).
+
+    Новое: если введённый slug занят другим user_id, и этот владелец реально в чате —
+    прерываем поток (анти-дубликат) — проверка безопасна даже если метода в Repo нет.
     """
     if message.chat.type != "private":
         me = await message.bot.get_me()
@@ -147,6 +184,7 @@ async def on_slug_received(
         )
         return
 
+    # нормализуем/валидируем slug
     raw = (message.text or "").strip()
     try:
         normalized = normalize_slug(raw)
@@ -155,10 +193,39 @@ async def on_slug_received(
         await message.answer(f"Формат не принят: {e}\nПопробуйте ещё раз.")
         return
 
+    # Проверяем членство текущего пользователя в чате
+    already_member = await _is_already_in_target_chat(message.bot, message.from_user.id)
+
     async with session_maker() as session:
         repo = Repo(session)
 
-        # 1) Чёрный список
+        # --- анти-дубликат по slug (если репозиторий умеет искать профиль по slug) ---
+        owner = None
+        if hasattr(repo, "get_profile_by_slug"):
+            try:
+                owner = await repo.get_profile_by_slug(normalized)  # type: ignore[attr-defined]
+            except Exception:
+                owner = None
+        if owner and int(getattr(owner, "user_id", 0)) != message.from_user.id:
+            if await _is_already_in_target_chat(message.bot, int(owner.user_id)):  # type: ignore[arg-type]
+                ui = (get_lang(message.from_user.id) or "ru").lower()
+                msg = {
+                    "ru": (
+                        "Участник с такими данными уже состоит в чате КЛС.\n"
+                        "Пожалуйста, используйте только один аккаунт.\n\n"
+                        "Если это вы, просто откройте /menu — «Личный кабинет» доступен."
+                    ),
+                    "en": (
+                        "A member with these details is already in the PLC chat.\n"
+                        "Please use only one account.\n\n"
+                        "If this is you, just open /menu — your Profile is available."
+                    ),
+                }[ui]
+                await state.clear()
+                await message.answer(msg)
+                return
+
+        # Чёрный список
         if await repo.blacklist_contains(message.from_user.id):
             await state.clear()
             await message.answer(
@@ -167,25 +234,43 @@ async def on_slug_received(
             )
             return
 
-        # 2) Уже в реестре
+        # Уже в чате → сразу done, профиль, roster, отзыв инвайта
+        if already_member:
+            app = await repo.add_application(
+                user_id=message.from_user.id,
+                username=message.from_user.username,
+                slug=normalized,
+            )
+            await repo.set_application_status(app.id, status="done")
+            await repo.ensure_profile(
+                user_id=message.from_user.id,
+                username=message.from_user.username,
+                slug=normalized,
+            )
+            try:
+                await repo.add_to_roster(normalized)
+            except Exception:
+                pass
+            await _revoke_active_invite(message.bot, repo, message.from_user.id)
+
+            await state.clear()
+            lang = get_lang(message.from_user.id) or "ru"
+            msg = {
+                "ru": "Вы уже состоите в чате. Заявка отмечена выполненной ✅\nОткройте /menu — «Личный кабинет» доступен.",
+                "en": "You are already in the chat. Your application has been marked done ✅\nOpen /menu — your Profile is available.",
+            }[lang]
+            await message.answer(msg)
+            return
+
+        # --- Обычный поток, если ещё не в чате ---
         if await repo.roster_contains(normalized):
             await state.clear()
             await message.answer(
-                "Вы уже числитесь в группе по нашей базе. Пожалуйста, пользуйтесь одним аккаунтом."
+                "По нашей базе вы уже числитесь в группе. Если это ошибка — напишите админу."
             )
             return
 
-        # 3) Активная персональная ссылка уже есть
-        if hasattr(repo, "get_active_invite"):
-            active_inv = await repo.get_active_invite(message.from_user.id)
-            if active_inv:
-                await state.clear()
-                await message.answer(
-                    "У вас уже есть активная персональная ссылка на вступление. "
-                    "Проверьте предыдущие сообщения — она всё ещё действительна."
-                )
-                return
-        elif hasattr(repo, "has_active_invite") and await repo.has_active_invite(message.from_user.id):
+        if await repo.get_active_invite(message.from_user.id):
             await state.clear()
             await message.answer(
                 "У вас уже есть активная персональная ссылка на вступление. "
@@ -193,13 +278,12 @@ async def on_slug_received(
             )
             return
 
-        # 4) Активная заявка
-        if hasattr(repo, "has_active_application") and await repo.has_active_application(message.from_user.id):
+        if await repo.has_active_application(message.from_user.id):
             await state.clear()
             await message.answer("У вас уже есть активная заявка. Дождитесь решения администратора.")
             return
 
-        # Создаём новую заявку
+        # Создаём новую заявку (pending) и уведомляем админов
         app = await repo.add_application(
             user_id=message.from_user.id,
             username=message.from_user.username,
@@ -233,14 +317,12 @@ async def on_slug_received(
                 logging.getLogger("innopls-bot").warning("Не удалось уведомить %s", admin_id)
 
         await state.clear()
-        # Сообщение пользователю: отправлено на рассмотрение
         lang = get_lang(message.from_user.id) or "ru"
         ok_text = {
             "ru": "Ваша заявка отправлена на рассмотрение администратору ✅",
             "en": "Your application has been sent to the administrator for review ✅",
         }[lang]
         await message.answer(ok_text)
-
 
 # ---- HANDLERS: ADMIN APPROVE/DENY ----
 @router.callback_query(AdminCB.filter(F.action == "approve"))
@@ -250,7 +332,9 @@ async def on_admin_approved(
     session_maker: async_sessionmaker[AsyncSession],
 ) -> None:
     """
-    Админ одобрил заявку — меняем статус и отправляем пользователю карточку с правилами + баннер.
+    Если пользователь уже в чате — сразу ставим done, создаём профиль/roster,
+    отзы́ваем активные ссылки и шлём ему уведомление без «правил».
+    Иначе — обычный поток: статус approved и карточка с правилами.
     """
     app_id = int(callback_data.app_id or 0)
     async with session_maker() as session:
@@ -260,9 +344,33 @@ async def on_admin_approved(
             await cb.answer("Заявка не найдена.", show_alert=True)
             return
 
-        await repo.set_application_status(app_id, status="approved")
+        already_member = await _is_already_in_target_chat(cb.bot, app.user_id)
 
-    # Текст + баннер по языку пользователя
+        if already_member:
+            await repo.set_application_status(app_id, status="done")
+            await repo.ensure_profile(user_id=app.user_id, username=app.username, slug=app.slug)
+            try:
+                await repo.add_to_roster(app.slug)
+            except Exception:
+                pass
+            await _revoke_active_invite(cb.bot, repo, app.user_id)
+        else:
+            await repo.set_application_status(app_id, status="approved")
+
+    if already_member:
+        lang = get_lang(app.user_id) or "ru"
+        msg = {
+            "ru": "Заявка отмечена выполненной: вы уже состоите в чате ✅\nОткройте /menu — «Личный кабинет» доступен.",
+            "en": "Your application has been marked done: you are already in the chat ✅\nOpen /menu — your Profile is available.",
+        }[lang]
+        try:
+            await cb.bot.send_message(chat_id=app.user_id, text=msg)
+        except Exception:
+            pass
+        await cb.answer("Пометил done — пользователь уже в чате.")
+        return
+
+    # ---- обычный approve ----
     lang = get_lang(app.user_id) or "ru"
     caption = {
         "ru": (
@@ -299,11 +407,9 @@ async def on_admin_approved(
             reply_markup=kb,
         )
     except Exception:
-        # Фолбэк без картинки
         await cb.bot.send_message(chat_id=app.user_id, text=caption, parse_mode=ParseMode.HTML, reply_markup=kb)
 
     await cb.answer("Отправлено пользователю.")
-
 
 @router.callback_query(AdminCB.filter(F.action == "deny"))
 async def on_admin_deny_click(
@@ -312,13 +418,7 @@ async def on_admin_deny_click(
     state: FSMContext,
     session_maker: async_sessionmaker[AsyncSession],
 ) -> None:
-    """
-    Старт отказа: просим администратора прислать причину одним сообщением.
-    Сохраняем ID заявки в FSM.
-    """
     app_id = int(callback_data.app_id or 0)
-
-    # Убедимся, что заявка существует, чтобы не собирать причину впустую
     async with session_maker() as session:
         repo = Repo(session)
         app = await repo.get_application(app_id)
@@ -328,7 +428,6 @@ async def on_admin_deny_click(
 
     await state.set_state(AdminStates.waiting_deny_reason)
     await state.update_data(app_id=app_id)
-
     await cb.message.answer(
         "✋ Отказ по заявке.\n"
         "Пожалуйста, отправьте одним сообщением <b>причину отказа</b> для пользователя.\n"
@@ -337,22 +436,15 @@ async def on_admin_deny_click(
     )
     await cb.answer()
 
-
 @router.message(AdminStates.waiting_deny_reason)
 async def on_admin_deny_reason(
     message: Message,
     state: FSMContext,
     session_maker: async_sessionmaker[AsyncSession],
 ) -> None:
-    """
-    Приём причины отказа от администратора.
-    Меняем статус заявки на 'rejected', уведомляем пользователя карточкой с баннером.
-    """
     data = await state.get_data()
     app_id = int(data.get("app_id") or 0)
     reason_raw = (message.text or "").strip()
-
-    # Нормализация причины: дефис/пусто -> None
     reason_to_save = None if reason_raw in {"", "-", "—"} else reason_raw
 
     async with session_maker() as session:
@@ -365,17 +457,10 @@ async def on_admin_deny_reason(
 
         await repo.set_application_status(app_id, status="rejected", reason=reason_to_save)
 
-        # Сообщение пользователю
         lang = get_lang(app.user_id) or "ru"
         caption = {
-            "ru": (
-                "Ваша заявка была отклонена администратором.\n\n"
-                "<i>Причина:</i>\n{reason}"
-            ),
-            "en": (
-                "Your application was rejected by an administrator.\n\n"
-                "<i>Reason:</i>\n{reason}"
-            ),
+            "ru": "Ваша заявка была отклонена администратором.\n\n<i>Причина:</i>\n{reason}",
+            "en": "Your application was rejected by an administrator.\n\n<i>Reason:</i>\n{reason}",
         }[lang].format(reason=html.escape(reason_raw) if reason_to_save else "—")
 
         try:
@@ -386,13 +471,10 @@ async def on_admin_deny_reason(
                 parse_mode=ParseMode.HTML,
             )
         except Exception:
-            await message.bot.send_message(
-                chat_id=app.user_id, text=caption, parse_mode=ParseMode.HTML
-            )
+            await message.bot.send_message(chat_id=app.user_id, text=caption, parse_mode=ParseMode.HTML)
 
     await state.clear()
     await message.answer("Отправлено пользователю ✅")
-
 
 # ---- HANDLERS: USER ACCEPT RULES ----
 @router.callback_query(JoinCB.filter(F.action == "accept_rules"))
@@ -402,13 +484,13 @@ async def on_rules_accepted(
     session_maker: async_sessionmaker[AsyncSession],
 ) -> None:
     """
-    Пользователь нажал «Принимаю правила».
-    Проверяем права бота и создаём персональный инвайт (1 пользователь, 24 часа).
-    После успешного создания отправляем карточку со ссылкой и баннером.
+    Если пользователь уже состоит в чате — помечаем заявку как done,
+    создаём профиль/roster, отзы́ваем активную ссылку и не создаём новую.
+    Иначе — обычная выдача персональной ссылки.
     """
     app_id = int(callback_data.app_id or 0)
 
-    # Проверка статуса бота в целевом чате
+    # статус бота в чате (как раньше)
     try:
         me = await cb.bot.get_me()
         cm = await cb.bot.get_chat_member(settings.TARGET_CHAT_ID, me.id)
@@ -421,7 +503,6 @@ async def on_rules_accepted(
         await cb.message.answer("❌ Бот не администратор в целевом чате. Выдайте право «Приглашать по ссылке».")
         await cb.answer()
         return
-
     if isinstance(cm, ChatMemberAdministrator):
         if hasattr(cm, "can_invite_users") and not cm.can_invite_users:
             await cb.message.answer("❌ У бота нет права «Приглашать по ссылке». Включите и повторите.")
@@ -435,8 +516,27 @@ async def on_rules_accepted(
             await cb.answer("Заявка не найдена или не принадлежит вам.", show_alert=True)
             return
 
-        # Не выдаём новый инвайт, если уже есть активный
-        if hasattr(repo, "has_active_invite") and await repo.has_active_invite(cb.from_user.id):
+        # Уже в чате? -> done, без ссылки
+        if await _is_already_in_target_chat(cb.bot, app.user_id):
+            await repo.set_application_status(app_id, status="done")
+            await repo.ensure_profile(user_id=app.user_id, username=app.username, slug=app.slug)
+            try:
+                await repo.add_to_roster(app.slug)
+            except Exception:
+                pass
+            await _revoke_active_invite(cb.bot, repo, app.user_id)
+
+            lang = get_lang(app.user_id) or "ru"
+            msg = {
+                "ru": "Вы уже состоите в чате — заявка отмечена выполненной ✅\nОткройте /menu.",
+                "en": "You are already in the chat — application marked done ✅\nOpen /menu.",
+            }[lang]
+            await cb.message.answer(msg)
+            await cb.answer()
+            return
+
+        # обычная логика: создаём персональную ссылку
+        if await repo.has_active_invite(cb.from_user.id):
             await cb.message.answer("У вас уже есть активная персональная ссылка. Проверьте предыдущие сообщения.")
             await cb.answer()
             return
@@ -464,7 +564,7 @@ async def on_rules_accepted(
         )
         await repo.set_application_status(app_id, status="done")
 
-    # Карточка со ссылкой
+    # карточка со ссылкой
     lang = get_lang(cb.from_user.id) or "ru"
     caption = {
         "ru": (
@@ -491,3 +591,42 @@ async def on_rules_accepted(
         await cb.message.answer(caption, parse_mode=ParseMode.HTML)
 
     await cb.answer()
+
+# ---- СЛУШАЕМ ФАКТИЧЕСКОЕ ВСТУПЛЕНИЕ В ЧАТ ----
+@router.chat_member()
+async def on_member_joined_target_chat(
+    ev: ChatMemberUpdated,
+    session_maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """Когда пользователь реально вступил в целевой чат — шлём ему главное меню (user)."""
+    # интересует только целевой чат
+    if int(ev.chat.id) != int(settings.TARGET_CHAT_ID):
+        return
+
+    user = ev.new_chat_member.user
+    if user.is_bot:
+        return
+
+    new_status = ev.new_chat_member.status
+    if new_status not in {ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR}:
+        return  # не событие «вступил»
+
+    # гарантируем профиль и подтягиваем slug из последней заявки (если была)
+    async with session_maker() as s:
+        repo = Repo(s)
+        last_app = await repo.get_last_application_for_user(user.id)
+        slug = getattr(last_app, "slug", None) if last_app else None
+        await repo.ensure_profile(user_id=user.id, username=user.username, slug=slug)
+
+    lang = (get_lang(user.id) or "ru").lower()
+    try:
+        await ev.bot.send_photo(
+            chat_id=user.id,
+            photo=_resolve_photo_source(AFTER_LANG_BANNER),
+            caption=_MENU_T["user_caption"]["en" if lang == "en" else "ru"],
+            parse_mode=ParseMode.HTML,
+            reply_markup=_user_menu_kb_join("en" if lang == "en" else "ru"),
+        )
+    except TelegramBadRequest:
+        # у пользователя закрыты ЛС — игнорируем
+        pass
