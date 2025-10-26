@@ -14,6 +14,7 @@ from __future__ import annotations
 - начисляем только зарегистрированным пользователям (Repo.has_registered)
 """
 
+import asyncio
 import re
 import logging
 from collections import OrderedDict
@@ -46,6 +47,8 @@ POSITIVE_EMOJI = {
     "❤️‍🔥", "💖", "💗", "💓", "💕"
 }
 NEGATIVE_EMOJI = {"👎", "💩", "🤮"}
+
+_DDL_LOCK = asyncio.Lock()
 
 # ограничение на размер кеша авторов
 _CACHE_LIMIT = 50_000
@@ -95,41 +98,69 @@ CREATE TABLE IF NOT EXISTS msg_authors (
 );
 """
 
-async def _ensure_columns(session: AsyncSession, table: str, need: dict[str, str]) -> None:
-    """Добавить отсутствующие колонки (SQLite ALTER TABLE ADD COLUMN)."""
-    res = await session.execute(text(f"PRAGMA table_info({table})"))
-    have = {row[1] for row in res.fetchall()}  # row[1] == name
-    for col, typ in need.items():
-        if col not in have:
-            await session.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {typ}"))
+async def _ensure_columns(session, table: str, columns: dict[str, str]) -> None:
+    """
+    Гарантирует, что в таблице есть указанные колонки.
+    Идемпотентно, устойчиво к конкурентным ALTER TABLE.
+    """
+    async with _DDL_LOCK:
+        res = await session.execute(text(f"PRAGMA table_info({table})"))
+        existing = {row[1] for row in res.fetchall()}  # имена колонок
+        for col, typ in columns.items():
+            if col in existing:
+                continue
+            try:
+                await session.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {typ}"))
+                await session.commit()
+            except OperationalError as e:
+                # Если другой поток успел добавить колонку — тихо игнорируем
+                if "duplicate column name" in str(e).lower():
+                    await session.rollback()
+                    continue
+                raise
+            except Exception:
+                # На всякий случай откат и проброс дальше
+                await session.rollback()
+                raise
+
+
+async def _ensure_aux_tables(session) -> None:
+    """
+    Создаём таблицы при первом запуске и догоним схему для старых БД.
+    """
+    # Базовые таблицы (со всеми актуальными колонками)
+    await session.execute(text("""
+        CREATE TABLE IF NOT EXISTS karma_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id   INTEGER NOT NULL,
+            actor_id  INTEGER NOT NULL,
+            chat_id   INTEGER NOT NULL,
+            msg_id    INTEGER,               -- может быть NULL для старых записей
+            delta     INTEGER NOT NULL,
+            reason    TEXT,
+            created_at TEXT NOT NULL
+        )
+    """))
+    await session.execute(text("""
+        CREATE TABLE IF NOT EXISTS message_authors (
+            chat_id  INTEGER NOT NULL,
+            msg_id   INTEGER NOT NULL,
+            author_id INTEGER NOT NULL,
+            PRIMARY KEY (chat_id, msg_id)
+        )
+    """))
     await session.commit()
 
-
-async def _ensure_aux_tables(session: AsyncSession) -> None:
-    # базовая таблица событий (старые инсталлы могли уже создать без msg_id)
-    await session.execute(text(_CREATE_EVENTS_BASE_SQL))
-    # мягкая миграция: добавим недостающие колонки
-    await _ensure_columns(
-        session,
-        "karma_events",
-        {
-            # msg_id добавился в новой версии
-            "msg_id": "INTEGER",
-            # а вдруг created_at отсутствует в старой таблице
-            "created_at": "TEXT",
-            # перестраховка: reason/actor_id/chat_id/delta
-            "reason": "TEXT",
-            "actor_id": "INTEGER",
-            "chat_id": "INTEGER",
-            "delta": "INTEGER",
-        },
-    )
-
-    # таблица авторов сообщений
-    await session.execute(text(_CREATE_MSG_AUTHORS_SQL))
-    await session.commit()
-
-
+    # Миграция старых установок: догоним недостающие колонки у karma_events
+    await _ensure_columns(session, "karma_events", {
+        "user_id":   "INTEGER",
+        "actor_id":  "INTEGER",
+        "chat_id":   "INTEGER",
+        "msg_id":    "INTEGER",
+        "delta":     "INTEGER",
+        "reason":    "TEXT",
+        "created_at":"TEXT"
+    })
 async def _store_msg_author(session: AsyncSession, *, chat_id: int, msg_id: int, user_id: int) -> None:
     await _ensure_aux_tables(session)
     await session.execute(

@@ -35,6 +35,7 @@ def _member_help_text(lang: str) -> str:
             "<b>/menu</b> — show the menu again\n"
             "<b>/top</b> — karma leaderboard\n"
             "<b>/help</b> — this help\n\n"
+            "<b>/stats</b> - karma gain statistics\n\n"
             "<i>Most features are available via buttons in the menu: "
             "Profile, Audio→Text, Rules, Settings.</i>"
         )
@@ -44,6 +45,7 @@ def _member_help_text(lang: str) -> str:
         "<b>/menu</b> — показать меню ещё раз\n"
         "<b>/top</b> — топ по карме\n"
         "<b>/help</b> — эта справка\n\n"
+        "<b>/stats</b> — статистика получения кармы\n\n"
         "<i>Большинство функций доступны через кнопки в меню: "
         "Личный кабинет, Аудио→Текст, Правила, Настройки.</i>"
     )
