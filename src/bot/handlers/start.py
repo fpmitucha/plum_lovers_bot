@@ -417,36 +417,7 @@ async def _transcribe_audio(file_path: str, lang_code: str | None) -> Tuple[str,
     return "", None, audio_seconds
 
 
-@router.message(CommandStart())
-async def cmd_start(message: Message, session_maker: async_sessionmaker[AsyncSession]) -> None:
-    if message.chat.type != "private":
-        me = await message.bot.get_me()
-        pm_url = f"https://t.me/{me.username}?start=join"
-        await message.answer(
-            "Откройте бота в личных сообщениях, чтобы продолжить:",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="Перейти в ЛС", url=pm_url)]
-            ]),
-        )
-        return
-
-    lang = (get_lang(message.from_user.id) or "ru").lower()
-    if lang not in ("ru", "en"):
-        lang = "ru"
-
-    show_join, show_profile = await _flags_for_menu(session_maker, message.from_user.id, message.from_user.username)
-
-    if not (show_profile and not show_join):
-        await message.answer_photo(
-            photo=_resolve_photo_source(START_BANNER),
-            caption=_T["greet"][lang],
-            parse_mode=ParseMode.HTML,
-            reply_markup=_lang_kb(),
-        )
-        return
-
-    media, kb = _render_user_menu(lang)
-    await message.answer_photo(media.media, caption=media.caption, parse_mode=media.parse_mode, reply_markup=kb)
+# Обработчик команды /start удален - теперь используется только /menu
 
 
 @router.message(Command("menu"))
