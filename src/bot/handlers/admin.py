@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 Админская панель КЛС.
 
@@ -14,9 +15,7 @@
 
 Команда входа: /admin
 """
-
-from __future__ import annotations
-
+import contextlib
 from typing import Optional
 
 from aiogram import Router, F
@@ -31,6 +30,7 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy import text
 
 from bot.config import settings
 from bot.utils.repo import Repo
@@ -40,13 +40,11 @@ router = Router(name="admin_menu")
 
 # Главный админ
 MAIN_ADMIN_ID = 8421106062
-
 # Размер страницы
 PAGE_SIZE = 20
 
 # Фильтр «не команда» — игнорируем всё, что начинается с «/»
 NO_COMMAND = (~F.text.regexp(r"^\s*/")) & (~F.caption.regexp(r"^\s*/"))
-
 
 class AdmCB(CallbackData, prefix="adm2"):
     """
@@ -735,3 +733,23 @@ async def admin_states_any_command(
 
     # По другим командам просто сообщим, что ввод прерван
     await message.answer("⏹️ Ввод прерван. Команда обработана. Если не сработало — отправьте её ещё раз.")
+
+async def _close_admin_request_message(cb: CallbackQuery, notice: str | None = None) -> None:
+    """Спрятать карточку заявки в чате, где нажал админ."""
+    deleted = False
+    try:
+        await cb.message.delete()
+        deleted = True
+    except Exception:
+        pass
+
+    if not deleted:
+        with contextlib.suppress(Exception):
+            if notice:
+                await cb.message.edit_text(notice, reply_markup=None)
+            else:
+                await cb.message.edit_reply_markup(reply_markup=None)
+
+    with contextlib.suppress(Exception):
+        await cb.answer()
+
