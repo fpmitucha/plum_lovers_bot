@@ -271,6 +271,14 @@ async def on_slug_received(
                 username=message.from_user.username,
                 slug=normalized,
             )
+            # Убеждаемся, что карма инициализирована правильно
+            await repo._ensure_karma_column()
+            karma = await repo.get_karma(message.from_user.id)
+            if karma == 10:  # Если карма равна значению по умолчанию, значит все в порядке
+                pass
+            else:
+                # Если карма не инициализирована, устанавливаем значение по умолчанию
+                await repo.set_karma(message.from_user.id, 10)
             try:
                 await repo.add_to_roster(normalized)
             except Exception:
@@ -380,6 +388,11 @@ async def on_admin_approved(
         if already_member:
             await repo.set_application_status(app_id, status="done")
             await repo.ensure_profile(user_id=app.user_id, username=app.username, slug=app.slug)
+            # Убеждаемся, что карма инициализирована правильно
+            await repo._ensure_karma_column()
+            karma = await repo.get_karma(app.user_id)
+            if karma != 10:  # Если карма не равна значению по умолчанию
+                await repo.set_karma(app.user_id, 10)
             with contextlib.suppress(Exception):
                 await repo.add_to_roster(app.slug)
             await _revoke_active_invite(cb.bot, repo, app.user_id)
@@ -554,6 +567,11 @@ async def on_rules_accepted(
         if await _is_already_in_target_chat(cb.bot, app.user_id):
             await repo.set_application_status(app_id, status="done")
             await repo.ensure_profile(user_id=app.user_id, username=app.username, slug=app.slug)
+            # Убеждаемся, что карма инициализирована правильно
+            await repo._ensure_karma_column()
+            karma = await repo.get_karma(app.user_id)
+            if karma != 10:  # Если карма не равна значению по умолчанию
+                await repo.set_karma(app.user_id, 10)
             with contextlib.suppress(Exception):
                 await repo.add_to_roster(app.slug)
             await _revoke_active_invite(cb.bot, repo, app.user_id)
@@ -647,6 +665,11 @@ async def on_member_joined_target_chat(
         last_app = await repo.get_last_application_for_user(user.id)
         slug = getattr(last_app, "slug", None) if last_app else None
         await repo.ensure_profile(user_id=user.id, username=user.username, slug=slug)
+        # Убеждаемся, что карма инициализирована правильно
+        await repo._ensure_karma_column()
+        karma = await repo.get_karma(user.id)
+        if karma != 10:  # Если карма не равна значению по умолчанию
+            await repo.set_karma(user.id, 10)
 
     lang = (get_lang(user.id) or "ru").lower()
     with contextlib.suppress(TelegramBadRequest):

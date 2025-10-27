@@ -99,6 +99,8 @@ class Repo:
         cols = [row[1] for row in res.all()]
         if "karma" not in cols:
             await self.session.execute(text(f"ALTER TABLE {table} ADD COLUMN karma INTEGER"))
+            # Инициализируем поле karma значением 10 для всех существующих записей
+            await self.session.execute(text(f"UPDATE {table} SET karma = 10 WHERE karma IS NULL"))
             await self.session.commit()
 
     async def get_karma(self, user_id: int) -> int:

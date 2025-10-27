@@ -127,7 +127,7 @@ async def on_chat_member(event: ChatMemberUpdated, session_maker: async_sessionm
                 await repo.add_to_roster(app.slug)  # идемпотентно
                 try:
                     await repo.ensure_profile(
-                        user_id=inv.user_id,
+                        user_id=joined_user_id,
                         username=event.new_chat_member.user.username,
                         slug=app.slug if app else None,
                     )
