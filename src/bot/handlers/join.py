@@ -39,6 +39,7 @@ from bot.keyboards.common import AdminCB, JoinCB, admin_review_kb, CabCB
 from bot.services.i18n import get_lang
 from bot.utils.parsing import normalize_slug, parse_slug
 from bot.utils.repo import Repo
+from bot.handlers.admin import _get_all_admin_ids
 
 router = Router(name="join")
 
@@ -158,6 +159,49 @@ async def _close_admin_request_message(cb: CallbackQuery, notice: str | None = N
     # 3) Закрыть спиннер
     with contextlib.suppress(Exception):
         await cb.answer()
+
+
+async def _update_application_messages_for_all_admins(
+    bot, 
+    app, 
+    session_maker: async_sessionmaker[AsyncSession],
+    result: str,
+    admin_username: str | None = None
+) -> None:
+    """
+    Обновить сообщения о заявке у всех админов с результатом обработки.
+    """
+    async with session_maker() as admin_session:
+        admin_repo = Repo(admin_session)
+        admin_ids = await _get_all_admin_ids(admin_repo)
+    
+    targets: list[int] = list(admin_ids)
+    admin_notify_chat_id = getattr(settings, "ADMIN_NOTIFY_CHAT_ID", None)
+    if admin_notify_chat_id:
+        targets.append(int(admin_notify_chat_id))
+
+    # Формируем обновленный текст
+    admin_tag = f"@{admin_username}" if admin_username else "Админ"
+    updated_text = (
+        f"📝 Обработал админ {admin_tag}\n\n"
+        f"<b>Slug:</b> <code>{html.escape(app.slug)}</code>\n"
+        f"<b>Пользователь:</b> <code>@{app.username}</code>\n"
+        f"<b>Telegram ID:</b> <code>{app.user_id}</code>\n"
+        f"<b>ID заявки:</b> <code>{app.id}</code>\n"
+        f"<b>RESULT:</b> <b>{result}</b>"
+    )
+
+    for admin_id in targets:
+        try:
+            # Пытаемся найти и обновить существующее сообщение
+            # Если не получается - отправляем новое
+            await bot.send_message(
+                chat_id=admin_id,
+                text=updated_text,
+                parse_mode=ParseMode.HTML,
+            )
+        except Exception as e:
+            logging.getLogger("innopls-bot").warning("Не удалось обновить сообщение для админа %s: %s", admin_id, e)
 
 # ---- HANDLERS: USER FLOW ----
 @router.callback_query(JoinCB.filter(F.action == "start"))
@@ -285,6 +329,46 @@ async def on_slug_received(
                 pass
             await _revoke_active_invite(message.bot, repo, message.from_user.id)
 
+            # Отправляем уведомление всем админам о новой заявке
+            mention = f"@{message.from_user.username}" if message.from_user.username else f"id:{message.from_user.id}"
+            text = (
+                "📝 Новая заявка на вступление\n\n"
+                f"<b>Slug:</b> <code>{html.escape(normalized)}</code>\n"
+                f"<b>Пользователь:</b> <code>{html.escape(mention)}</code>\n"
+                f"<b>Telegram ID:</b> <code>{message.from_user.id}</code>\n"
+                f"<b>ID заявки:</b> <code>{app.id}</code>"
+            )
+
+            # Получаем всех админов (из настроек + из БД + главный админ)
+            async with session_maker() as admin_session:
+                admin_repo = Repo(admin_session)
+                admin_ids = await _get_all_admin_ids(admin_repo)
+            
+            targets: list[int] = list(admin_ids)
+            admin_notify_chat_id = getattr(settings, "ADMIN_NOTIFY_CHAT_ID", None)
+            if admin_notify_chat_id:
+                targets.append(int(admin_notify_chat_id))
+
+            for admin_id in targets:
+                try:
+                    await message.bot.send_message(
+                        chat_id=admin_id,
+                        text=text,
+                        parse_mode=ParseMode.HTML,
+                        reply_markup=admin_review_kb(app.id).as_markup(),
+                    )
+                except Exception:
+                    logging.getLogger("innopls-bot").warning("Не удалось уведомить %s", admin_id)
+
+            # Обновляем сообщения у всех админов с результатом
+            await _update_application_messages_for_all_admins(
+                message.bot, 
+                app, 
+                session_maker,
+                "AUTO-APPROVED (уже в чате)",
+                None
+            )
+
             await state.clear()
             lang = get_lang(message.from_user.id) or "ru"
             msg = {
@@ -331,11 +415,15 @@ async def on_slug_received(
             f"<b>ID заявки:</b> <code>{app.id}</code>"
         )
 
-        targets: list[int] = []
+        # Получаем всех админов (из настроек + из БД + главный админ)
+        async with session_maker() as admin_session:
+            admin_repo = Repo(admin_session)
+            admin_ids = await _get_all_admin_ids(admin_repo)
+        
+        targets: list[int] = list(admin_ids)
         admin_notify_chat_id = getattr(settings, "ADMIN_NOTIFY_CHAT_ID", None)
         if admin_notify_chat_id:
             targets.append(int(admin_notify_chat_id))
-        targets.extend(settings.ADMIN_USER_IDS)
 
         for admin_id in targets:
             try:
@@ -397,6 +485,15 @@ async def on_admin_approved(
                 await repo.add_to_roster(app.slug)
             await _revoke_active_invite(cb.bot, repo, app.user_id)
 
+            # Обновляем сообщения у всех админов с результатом
+            await _update_application_messages_for_all_admins(
+                cb.bot, 
+                app, 
+                session_maker,
+                "AUTO-APPROVED (уже в чате)",
+                cb.from_user.username
+            )
+
             # уведомим пользователя
             lang = get_lang(app.user_id) or "ru"
             msg = {
@@ -448,6 +545,15 @@ async def on_admin_approved(
             reply_markup=kb,
         )
 
+    # Обновляем сообщения у всех админов с результатом
+    await _update_application_messages_for_all_admins(
+        cb.bot, 
+        app, 
+        session_maker,
+        "APPROVED",
+        cb.from_user.username
+    )
+    
     # скрываем карточку у нажавшего админа
     await _close_admin_request_message(cb)
 
@@ -505,6 +611,15 @@ async def on_admin_deny_reason(
             return
 
         await repo.set_application_status(app_id, status="rejected", reason=reason_to_save)
+
+        # Обновляем сообщения у всех админов с результатом
+        await _update_application_messages_for_all_admins(
+            message.bot, 
+            app, 
+            session_maker,
+            "DENIED",
+            message.from_user.username
+        )
 
         lang = get_lang(app.user_id) or "ru"
         caption = {
@@ -575,6 +690,15 @@ async def on_rules_accepted(
             with contextlib.suppress(Exception):
                 await repo.add_to_roster(app.slug)
             await _revoke_active_invite(cb.bot, repo, app.user_id)
+
+            # Обновляем сообщения у всех админов с результатом
+            await _update_application_messages_for_all_admins(
+                cb.bot, 
+                app, 
+                session_maker,
+                "AUTO-APPROVED (уже в чате)",
+                cb.from_user.username
+            )
 
             lang = get_lang(app.user_id) or "ru"
             msg = {
