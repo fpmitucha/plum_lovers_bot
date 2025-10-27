@@ -31,21 +31,19 @@ def _member_help_text(lang: str) -> str:
     if lang == "en":
         return (
             "<b>Available commands</b>\n\n"
-            "<b>/start</b> — open the main menu\n"
-            "<b>/menu</b> — show the menu again\n"
+            "<b>/stats</b> — karma gain statistics\n"
             "<b>/top</b> — karma leaderboard\n"
-            "<b>/help</b> — this help\n\n"
-            "<b>/stats</b> - karma gain statistics\n\n"
+            "<b>/help</b> — this help\n"
+            "<b>/whoami</b> — show your Telegram ID\n\n"
             "<i>Most features are available via buttons in the menu: "
             "Profile, Audio→Text, Rules, Settings.</i>"
         )
     return (
         "<b>Доступные команды</b>\n\n"
-        "<b>/start</b> — открыть основное меню\n"
-        "<b>/menu</b> — показать меню ещё раз\n"
+        "<b>/stats</b> — статистика получения кармы\n"
         "<b>/top</b> — топ по карме\n"
-        "<b>/help</b> — эта справка\n\n"
-        "<b>/stats</b> — статистика получения кармы\n\n"
+        "<b>/help</b> — эта справка\n"
+        "<b>/whoami</b> — показать ваш Telegram ID\n\n"
         "<i>Большинство функций доступны через кнопки в меню: "
         "Личный кабинет, Аудио→Текст, Правила, Настройки.</i>"
     )
@@ -54,12 +52,18 @@ def _member_help_text(lang: str) -> str:
 def _guest_help_text(lang: str) -> str:
     if lang == "en":
         return (
+            "<b>Available commands</b>\n\n"
+            "<b>/help</b> — this help\n"
+            "<b>/whoami</b> — show your Telegram ID\n\n"
             "<b>Registration required</b>\n"
             "To unlock full functionality (materials, tasks, stats and saved items), "
             "please complete a short registration. This confirms your PLC membership "
             "and saves your progress."
         )
     return (
+        "<b>Доступные команды</b>\n\n"
+        "<b>/help</b> — эта справка\n"
+        "<b>/whoami</b> — показать ваш Telegram ID\n\n"
         "<b>Нужна регистрация</b>\n"
         "Чтобы открыть полный доступ к функционалу бота (материалы, задания, "
         "статистика и сохранённые), пройди короткую регистрацию. "
@@ -115,6 +119,34 @@ async def cmd_help(message: Message, session_maker: async_sessionmaker[AsyncSess
 
     media, kb = await _render_help_for_user(lang=lang, is_member=is_member)
     await message.answer_photo(media.media, caption=media.caption, parse_mode=media.parse_mode, reply_markup=kb)
+
+
+@router.message(Command("whoami"))
+async def cmd_whoami(message: Message) -> None:
+    """Показать Telegram ID пользователя."""
+    lang = (get_lang(message.from_user.id) or "ru").lower()
+    
+    user_id = message.from_user.id
+    username = message.from_user.username
+    first_name = message.from_user.first_name or ""
+    last_name = message.from_user.last_name or ""
+    
+    if lang == "en":
+        text = (
+            f"<b>Your Telegram Information:</b>\n\n"
+            f"<b>ID:</b> <code>{user_id}</code>\n"
+            f"<b>Username:</b> @{username if username else 'not set'}\n"
+            f"<b>Name:</b> {first_name} {last_name}".strip()
+        )
+    else:
+        text = (
+            f"<b>Ваша информация в Telegram:</b>\n\n"
+            f"<b>ID:</b> <code>{user_id}</code>\n"
+            f"<b>Username:</b> @{username if username else 'не установлен'}\n"
+            f"<b>Имя:</b> {first_name} {last_name}".strip()
+        )
+    
+    await message.answer(text, parse_mode=ParseMode.HTML)
 
 
 @router.callback_query(StartCB.filter(F.action == "help"))

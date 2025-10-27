@@ -37,8 +37,10 @@ async def set_bot_commands(bot: Bot) -> None:
     """Зарегистрировать команды бота в интерфейсе Telegram."""
     await bot.set_my_commands(
         commands=[
-            BotCommand(command="start", description="Начать"),
             BotCommand(command="stats", description="Статистика моей кармы"),
+            BotCommand(command="top", description="Топ пользователей по карме"),
+            BotCommand(command="help", description="Помощь и информация"),
+            BotCommand(command="whoami", description="Показать мой Telegram ID"),
             # BotCommand(command="admin", description="Админ-панель"),
         ]
     )
