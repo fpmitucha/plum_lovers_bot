@@ -163,16 +163,16 @@ async def cmd_whoami(message: Message, command: CommandObject) -> None:
             last_name = user_info.get("lastName") or ""
             if lang == "en":
                 text = (
-                    f"<b>Telegram Information for @{username_to_check}:</b>\n\n"
+                    f"<b>Telegram Information for <code>@{username_to_check}</code>:</b>\n\n"
                     f"<b>ID:</b> <code>{user_info['id']}</code>\n"
-                    f"<b>Username:</b> {'@' + checked_username if checked_username else 'not set'}\n"
+                    f"<b>Username:</b> <code>{'@' + checked_username if checked_username else 'not set'}</code>\n"
                     f"<b>Name:</b> {f'{first_name} {last_name}'.strip() or '—'}"
                 )
             else:
                 text = (
-                    f"<b>Информация о Telegram для @{username_to_check}:</b>\n\n"
+                    f"<b>Информация о Telegram для <code>@{username_to_check}</code>:</b>\n\n"
                     f"<b>ID:</b> <code>{user_info['id']}</code>\n"
-                    f"<b>Username:</b> {'@' + checked_username if checked_username else 'не установлен'}\n"
+                    f"<b>Username:</b> <code>{'@' + checked_username if checked_username else 'не установлен'}</code>\n"
                     f"<b>Имя:</b> {f'{first_name} {last_name}'.strip() or '—'}"
                 )
         else:
@@ -185,14 +185,14 @@ async def cmd_whoami(message: Message, command: CommandObject) -> None:
                 text = (
                     "<b>Your Telegram Information:</b>\n\n"
                     f"<b>ID:</b> <code>{user_id}</code>\n"
-                    f"<b>Username:</b> {'@' + username if username else 'not set'}\n"
+                    f"<b>Username:</b> <code>{'@' + username if username else 'not set'}</code>\n"
                     f"<b>Name:</b> {f'{first_name} {last_name}'.strip() or '—'}"
                 )
             else:
                 text = (
                     "<b>Ваша информация в Telegram:</b>\n\n"
                     f"<b>ID:</b> <code>{user_id}</code>\n"
-                    f"<b>Username:</b> {'@' + username if username else 'не установлен'}\n"
+                    f"<b>Username:</b> <code>{'@' + username if username else 'не установлен'}</code>\n"
                     f"<b>Имя:</b> {f'{first_name} {last_name}'.strip() or '—'}"
                 )
 

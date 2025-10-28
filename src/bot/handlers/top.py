@@ -46,7 +46,8 @@ async def cmd_top(message: Message, session_maker: async_sessionmaker[AsyncSessi
         }[lang]
         lines = []
         for pos, (uid, uname, karma) in enumerate(rows, 1):
-            tag = f"@{uname}" if uname else f"id:{uid}"
+            # Используем <code> чтобы не тегать пользователей
+            tag = f"<code>@{uname}</code>" if uname else f"<code>id:{uid}</code>"
             lines.append(f"{pos}. {tag} — <b>{karma}</b>")
         text = header + "\n".join(lines)
 
