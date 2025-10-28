@@ -16,6 +16,10 @@ from __future__ import annotations
 Команда входа: /admin
 """
 import contextlib
+import shutil
+import tempfile
+from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
 from aiogram import Router, F
@@ -25,7 +29,7 @@ from aiogram.filters import Command
 from aiogram.filters.callback_data import CallbackData
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
-from aiogram.types import Message, CallbackQuery, InlineKeyboardButton
+from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, FSInputFile
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -753,4 +757,128 @@ async def _close_admin_request_message(cb: CallbackQuery, notice: str | None = N
 
     with contextlib.suppress(Exception):
         await cb.answer()
+
+
+# -------------------- БЭКАП БАЗЫ ДАННЫХ --------------------
+
+@router.message(Command("bd"))
+async def cmd_backup_database(message: Message, session_maker: async_sessionmaker[AsyncSession]) -> None:
+    """
+    Бэкап базы данных. Доступ только главному админу.
+    Отправляет:
+    1. Файл базы данных (SQLite)
+    2. Текстовый дамп содержимого всех таблиц
+    """
+    # Проверка доступа - только главный админ
+    if message.from_user.id != MAIN_ADMIN_ID:
+        await message.answer("❌ Доступ запрещён. Команда доступна только главному администратору.")
+        return
+
+    await message.answer("⏳ Создаю бэкап базы данных...")
+
+    try:
+        # Определяем путь к базе данных
+        db_url = settings.DATABASE_URL
+        if db_url.startswith("sqlite+aiosqlite:///"):
+            db_path = Path(db_url.replace("sqlite+aiosqlite:///", ""))
+        elif db_url.startswith("sqlite:///"):
+            db_path = Path(db_url.replace("sqlite:///", ""))
+        else:
+            await message.answer("❌ Бэкап поддерживается только для SQLite баз данных.")
+            return
+
+        if not db_path.exists():
+            await message.answer(f"❌ Файл базы данных не найден: {db_path}")
+            return
+
+        # Создаем временную директорию для бэкапа
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+
+            # 1. Копируем файл базы данных
+            db_backup_path = tmp_path / f"backup_{timestamp}.db"
+            shutil.copy2(db_path, db_backup_path)
+
+            # 2. Создаем текстовый дамп содержимого
+            dump_path = tmp_path / f"backup_{timestamp}_dump.txt"
+            
+            async with session_maker() as session:
+                with open(dump_path, "w", encoding="utf-8") as f:
+                    f.write(f"=== БЭКАП БАЗЫ ДАННЫХ ===\n")
+                    f.write(f"Дата и время: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                    f.write(f"База данных: {db_path}\n")
+                    f.write("=" * 80 + "\n\n")
+
+                    # Получаем список всех таблиц
+                    tables_result = await session.execute(
+                        text("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+                    )
+                    tables = [row[0] for row in tables_result.fetchall()]
+
+                    # Дампим содержимое каждой таблицы
+                    for table_name in tables:
+                        f.write(f"\n{'=' * 80}\n")
+                        f.write(f"ТАБЛИЦА: {table_name}\n")
+                        f.write(f"{'=' * 80}\n\n")
+
+                        try:
+                            # Получаем данные из таблицы
+                            result = await session.execute(text(f"SELECT * FROM {table_name}"))
+                            rows = result.fetchall()
+                            columns = result.keys()
+
+                            if not rows:
+                                f.write("(пусто)\n")
+                            else:
+                                # Заголовки колонок
+                                f.write(" | ".join(columns) + "\n")
+                                f.write("-" * 80 + "\n")
+
+                                # Данные
+                                for row in rows:
+                                    values = [str(v) if v is not None else "NULL" for v in row]
+                                    f.write(" | ".join(values) + "\n")
+
+                                f.write(f"\nВсего записей: {len(rows)}\n")
+
+                        except Exception as e:
+                            f.write(f"❌ Ошибка при чтении таблицы: {e}\n")
+
+                    # Статистика в конце
+                    f.write(f"\n\n{'=' * 80}\n")
+                    f.write("СТАТИСТИКА\n")
+                    f.write(f"{'=' * 80}\n\n")
+                    f.write(f"Всего таблиц: {len(tables)}\n")
+                    f.write(f"Список таблиц: {', '.join(tables)}\n")
+
+            # 3. Отправляем файлы админу
+            await message.answer("📤 Отправляю файлы бэкапа...")
+
+            # Отправляем файл базы данных
+            db_file = FSInputFile(db_backup_path, filename=f"backup_{timestamp}.db")
+            await message.answer_document(
+                document=db_file,
+                caption=f"🗄️ <b>Бэкап базы данных</b>\n\n"
+                        f"📅 Дата: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+                        f"📊 Размер: {db_backup_path.stat().st_size / 1024:.2f} KB",
+                parse_mode=ParseMode.HTML
+            )
+
+            # Отправляем текстовый дамп
+            dump_file = FSInputFile(dump_path, filename=f"backup_{timestamp}_dump.txt")
+            await message.answer_document(
+                document=dump_file,
+                caption=f"📄 <b>Текстовый дамп базы данных</b>\n\n"
+                        f"📅 Дата: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+                        f"📊 Размер: {dump_path.stat().st_size / 1024:.2f} KB",
+                parse_mode=ParseMode.HTML
+            )
+
+            await message.answer("✅ Бэкап успешно создан и отправлен!")
+
+    except Exception as e:
+        import logging
+        logging.getLogger("innopls-bot").error(f"Ошибка при создании бэкапа: {e}", exc_info=True)
+        await message.answer(f"❌ Ошибка при создании бэкапа: {e}")
 
