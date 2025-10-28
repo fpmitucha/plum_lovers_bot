@@ -37,6 +37,7 @@ async def set_bot_commands(bot: Bot) -> None:
     """Зарегистрировать команды бота в интерфейсе Telegram."""
     await bot.set_my_commands(
         commands=[
+            BotCommand(command="start", description="Главное меню"),
             BotCommand(command="stats", description="Статистика моей кармы"),
             BotCommand(command="top", description="Топ пользователей по карме"),
             BotCommand(command="help", description="Помощь и информация"),
@@ -89,19 +90,19 @@ async def main():
     )
     dp = Dispatcher()
 
-    # ПОРЯДОК ВАЖЕН: карма — до админских ловушек
+    # ПОРЯДОК ВАЖЕН: команды до universal handlers
     dp.include_router(help_member.router)
     dp.include_router(start_handlers.router)
     dp.include_router(join_handlers.router)
-
-    dp.include_router(karma_auto_router)             # ← приоритетно
-
+    dp.include_router(top_router)
     dp.include_router(admin_handlers.router)
+    dp.include_router(admin_karma.router)
+    dp.include_router(cabinet_handlers.router)
+
+    dp.include_router(karma_auto_router)             # ← после всех команд (есть @router.message())
+
     dp.include_router(chat_member_handlers.router)
     dp.include_router(cleanup_handlers.router)
-    dp.include_router(cabinet_handlers.router)
-    dp.include_router(admin_karma.router)
-    dp.include_router(top_router)
 
     engine = create_engine(settings.DATABASE_URL)
     await on_startup(dp, bot, engine)

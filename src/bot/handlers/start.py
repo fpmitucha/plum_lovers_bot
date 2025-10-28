@@ -429,9 +429,7 @@ async def _transcribe_audio(file_path: str, lang_code: str | None) -> Tuple[str,
     return "", None, audio_seconds
 
 
-# Обработчик команды /start удален - теперь используется только /menu
-
-
+@router.message(Command("start"))
 @router.message(Command("menu"))
 async def cmd_menu(message: Message, session_maker: async_sessionmaker[AsyncSession]) -> None:
     lang = (get_lang(message.from_user.id) or "ru").lower()
