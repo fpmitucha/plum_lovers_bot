@@ -135,65 +135,71 @@ async def cmd_whoami(message: Message, command: CommandObject) -> None:
     logger = logging.getLogger("innopls-bot")
     logger.info(f"Команда /whoami вызвана пользователем {message.from_user.id}")
     
-    lang = (get_lang(message.from_user.id) or "ru").lower()
-    if command.args and command.args.strip():
-        username_to_check = command.args.strip().lstrip("@")
-        try:
-            user_info = UserInfoSource().get_user_info(username_to_check)
-            if not user_info or "id" not in user_info:
-                raise RuntimeError("User not found")
-        except RuntimeError:
-            await message.answer(
-                text={"ru": "❌ Не удалось получить информацию о пользователе.",
-                      "en": "❌ Failed to get user information."}[lang])
-            return
-        except Exception:
-            await message.answer(
-                text={"ru": "❌ Не удалось получить информацию о пользователе.",
-                      "en": "❌ Failed to get user information."}[lang],
-                parse_mode=ParseMode.HTML,
-            )
-            return
+    try:
+        lang = (get_lang(message.from_user.id) or "ru").lower()
+        logger.info(f"command object: {command}, command.args: {getattr(command, 'args', 'NO ARGS ATTR')}")
+        
+        if command.args and command.args.strip():
+            username_to_check = command.args.strip().lstrip("@")
+            try:
+                user_info = UserInfoSource().get_user_info(username_to_check)
+                if not user_info or "id" not in user_info:
+                    raise RuntimeError("User not found")
+            except RuntimeError:
+                await message.answer(
+                    text={"ru": "❌ Не удалось получить информацию о пользователе.",
+                          "en": "❌ Failed to get user information."}[lang])
+                return
+            except Exception:
+                await message.answer(
+                    text={"ru": "❌ Не удалось получить информацию о пользователе.",
+                          "en": "❌ Failed to get user information."}[lang],
+                    parse_mode=ParseMode.HTML,
+                )
+                return
 
-        checked_username = user_info.get("username")
-        first_name = user_info.get("firstName") or ""
-        last_name = user_info.get("lastName") or ""
-        if lang == "en":
-            text = (
-                f"<b>Telegram Information for @{username_to_check}:</b>\n\n"
-                f"<b>ID:</b> <code>{user_info['id']}</code>\n"
-                f"<b>Username:</b> {'@' + checked_username if checked_username else 'not set'}\n"
-                f"<b>Name:</b> {f'{first_name} {last_name}'.strip() or '—'}"
-            )
+            checked_username = user_info.get("username")
+            first_name = user_info.get("firstName") or ""
+            last_name = user_info.get("lastName") or ""
+            if lang == "en":
+                text = (
+                    f"<b>Telegram Information for @{username_to_check}:</b>\n\n"
+                    f"<b>ID:</b> <code>{user_info['id']}</code>\n"
+                    f"<b>Username:</b> {'@' + checked_username if checked_username else 'not set'}\n"
+                    f"<b>Name:</b> {f'{first_name} {last_name}'.strip() or '—'}"
+                )
+            else:
+                text = (
+                    f"<b>Информация о Telegram для @{username_to_check}:</b>\n\n"
+                    f"<b>ID:</b> <code>{user_info['id']}</code>\n"
+                    f"<b>Username:</b> {'@' + checked_username if checked_username else 'не установлен'}\n"
+                    f"<b>Имя:</b> {f'{first_name} {last_name}'.strip() or '—'}"
+                )
         else:
-            text = (
-                f"<b>Информация о Telegram для @{username_to_check}:</b>\n\n"
-                f"<b>ID:</b> <code>{user_info['id']}</code>\n"
-                f"<b>Username:</b> {'@' + checked_username if checked_username else 'не установлен'}\n"
-                f"<b>Имя:</b> {f'{first_name} {last_name}'.strip() or '—'}"
-            )
-    else:
-        user_id = message.from_user.id
-        username = message.from_user.username
-        first_name = message.from_user.first_name or ""
-        last_name = message.from_user.last_name or ""
+            user_id = message.from_user.id
+            username = message.from_user.username
+            first_name = message.from_user.first_name or ""
+            last_name = message.from_user.last_name or ""
 
-        if lang == "en":
-            text = (
-                "<b>Your Telegram Information:</b>\n\n"
-                f"<b>ID:</b> <code>{user_id}</code>\n"
-                f"<b>Username:</b> {'@' + username if username else 'not set'}\n"
-                f"<b>Name:</b> {f'{first_name} {last_name}'.strip() or '—'}"
-            )
-        else:
-            text = (
-                "<b>Ваша информация в Telegram:</b>\n\n"
-                f"<b>ID:</b> <code>{user_id}</code>\n"
-                f"<b>Username:</b> {'@' + username if username else 'не установлен'}\n"
-                f"<b>Имя:</b> {f'{first_name} {last_name}'.strip() or '—'}"
-            )
+            if lang == "en":
+                text = (
+                    "<b>Your Telegram Information:</b>\n\n"
+                    f"<b>ID:</b> <code>{user_id}</code>\n"
+                    f"<b>Username:</b> {'@' + username if username else 'not set'}\n"
+                    f"<b>Name:</b> {f'{first_name} {last_name}'.strip() or '—'}"
+                )
+            else:
+                text = (
+                    "<b>Ваша информация в Telegram:</b>\n\n"
+                    f"<b>ID:</b> <code>{user_id}</code>\n"
+                    f"<b>Username:</b> {'@' + username if username else 'не установлен'}\n"
+                    f"<b>Имя:</b> {f'{first_name} {last_name}'.strip() or '—'}"
+                )
 
-    await message.answer(text, parse_mode=ParseMode.HTML)
+        await message.answer(text, parse_mode=ParseMode.HTML)
+    except Exception as e:
+        logger.error(f"Ошибка в обработчике /whoami: {e}", exc_info=True)
+        await message.answer("❌ Произошла ошибка при обработке команды.")
 
 
 @router.callback_query(StartCB.filter(F.action == "help"))

@@ -23,7 +23,6 @@ from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command
 from aiogram.filters.callback_data import CallbackData
-from aiogram.filters.command import CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.types import Message, CallbackQuery, InlineKeyboardButton
@@ -701,29 +700,31 @@ async def on_admin_del_user_id(
 # ---------- Команды во время админских состояний: сброс состояния + проброс /stats ----------
 
 @router.message(
-    AdminStates.waiting_roster_slug, Command()
+    AdminStates.waiting_roster_slug, F.text.regexp(r"^\s*/")
 )
 @router.message(
-    AdminStates.waiting_search_query, Command()
+    AdminStates.waiting_search_query, F.text.regexp(r"^\s*/")
 )
 @router.message(
-    AdminStates.waiting_edit_slug, Command()
+    AdminStates.waiting_edit_slug, F.text.regexp(r"^\s*/")
 )
 @router.message(
-    AdminStates.waiting_admin_user_id, Command()
+    AdminStates.waiting_admin_user_id, F.text.regexp(r"^\s*/")
 )
 @router.message(
-    AdminStates.waiting_admin_del_user_id, Command()
+    AdminStates.waiting_admin_del_user_id, F.text.regexp(r"^\s*/")
 )
 async def admin_states_any_command(
     message: Message,
     state: FSMContext,
     session_maker: async_sessionmaker[AsyncSession],
-    command: CommandObject,
 ) -> None:
     # Сбрасываем состояние, чтобы не «съедать» команды
     await state.clear()
-    cmd = (command.command or "").lower()
+    
+    # Извлекаем команду из текста (первое слово без "/" и без "@bot_name")
+    text = (message.text or "").strip()
+    cmd = text.split()[0].lstrip("/").split("@")[0].lower() if text else ""
 
     if cmd == "stats":
         # Пробрасываем в хендлер кармы
