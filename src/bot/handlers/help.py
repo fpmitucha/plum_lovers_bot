@@ -3,6 +3,8 @@ from __future__ import annotations
 from aiogram import Router, F
 from aiogram.enums import ParseMode
 from aiogram.filters import Command
+from aiogram.types import Message
+from aiogram.filters.command import CommandObject
 from aiogram.types import (
     CallbackQuery,
     Message,
@@ -20,6 +22,7 @@ from bot.handlers.start import StartCB  # используем ту же callbac
 from bot.keyboards.common import JoinCB
 from bot.services.i18n import get_lang
 from bot.utils.repo import Repo
+from src.bot.services.user_info import UserInfoSource
 
 router = Router(name="help_member")
 
@@ -34,7 +37,8 @@ def _member_help_text(lang: str) -> str:
             "<b>/stats</b> — karma gain statistics\n"
             "<b>/top</b> — karma leaderboard\n"
             "<b>/help</b> — this help\n"
-            "<b>/whoami</b> — show your Telegram ID\n\n"
+            "<b>/whoami</b> — show your Telegram info (ID, username, name); "
+            "use <code>/whoami @username</code> to check another user\n\n"
             "<i>Most features are available via buttons in the menu: "
             "Profile, Audio→Text, Rules, Settings.</i>"
         )
@@ -43,7 +47,8 @@ def _member_help_text(lang: str) -> str:
         "<b>/stats</b> — статистика получения кармы\n"
         "<b>/top</b> — топ по карме\n"
         "<b>/help</b> — эта справка\n"
-        "<b>/whoami</b> — показать ваш Telegram ID\n\n"
+        "<b>/whoami</b> — показать вашу информацию (ID, @username, имя); "
+        "<code>/whoami @username</code> проверяет другого участника\n\n"
         "<i>Большинство функций доступны через кнопки в меню: "
         "Личный кабинет, Аудио→Текст, Правила, Настройки.</i>"
     )
@@ -54,7 +59,8 @@ def _guest_help_text(lang: str) -> str:
         return (
             "<b>Available commands</b>\n\n"
             "<b>/help</b> — this help\n"
-            "<b>/whoami</b> — show your Telegram ID\n\n"
+            "<b>/whoami</b> — show your Telegram info (ID, username, name); "
+            "use <code>/whoami @username</code> to check another user\n\n"
             "<b>Registration required</b>\n"
             "To unlock full functionality (materials, tasks, stats and saved items), "
             "please complete a short registration. This confirms your PLC membership "
@@ -63,7 +69,8 @@ def _guest_help_text(lang: str) -> str:
     return (
         "<b>Доступные команды</b>\n\n"
         "<b>/help</b> — эта справка\n"
-        "<b>/whoami</b> — показать ваш Telegram ID\n\n"
+        "<b>/whoami</b> — показать вашу информацию (ID, @username, имя); "
+        "<code>/whoami @username</code> проверяет другого участника\n\n"
         "<b>Нужна регистрация</b>\n"
         "Чтобы открыть полный доступ к функционалу бота (материалы, задания, "
         "статистика и сохранённые), пройди короткую регистрацию. "
@@ -122,30 +129,66 @@ async def cmd_help(message: Message, session_maker: async_sessionmaker[AsyncSess
 
 
 @router.message(Command("whoami"))
-async def cmd_whoami(message: Message) -> None:
+async def cmd_whoami(message: Message, command: CommandObject) -> None:
     """Показать Telegram ID пользователя."""
     lang = (get_lang(message.from_user.id) or "ru").lower()
-    
-    user_id = message.from_user.id
-    username = message.from_user.username
-    first_name = message.from_user.first_name or ""
-    last_name = message.from_user.last_name or ""
-    
-    if lang == "en":
-        text = (
-            f"<b>Your Telegram Information:</b>\n\n"
-            f"<b>ID:</b> <code>{user_id}</code>\n"
-            f"<b>Username:</b> @{username if username else 'not set'}\n"
-            f"<b>Name:</b> {first_name} {last_name}".strip()
-        )
+    if command.args and command.args.strip():
+        username_to_check = command.args.strip().lstrip("@")
+        try:
+            user_info = UserInfoSource().get_user_info(username_to_check)
+            if not user_info or "id" not in user_info:
+                raise RuntimeError("User not found")
+        except RuntimeError:
+            await message.answer(
+                text={"ru": "❌ Не удалось получить информацию о пользователе.",
+                      "en": "❌ Failed to get user information."}[lang])
+            return
+        except Exception:
+            await message.answer(
+                text={"ru": "❌ Не удалось получить информацию о пользователе.",
+                      "en": "❌ Failed to get user information."}[lang],
+                parse_mode=ParseMode.HTML,
+            )
+            return
+
+        checked_username = user_info.get("username")
+        first_name = user_info.get("firstName") or ""
+        last_name = user_info.get("lastName") or ""
+        if lang == "en":
+            text = (
+                f"<b>Telegram Information for @{username_to_check}:</b>\n\n"
+                f"<b>ID:</b> <code>{user_info['id']}</code>\n"
+                f"<b>Username:</b> {'@' + checked_username if checked_username else 'not set'}\n"
+                f"<b>Name:</b> {f'{first_name} {last_name}'.strip() or '—'}"
+            )
+        else:
+            text = (
+                f"<b>Информация о Telegram для @{username_to_check}:</b>\n\n"
+                f"<b>ID:</b> <code>{user_info['id']}</code>\n"
+                f"<b>Username:</b> {'@' + checked_username if checked_username else 'не установлен'}\n"
+                f"<b>Имя:</b> {f'{first_name} {last_name}'.strip() or '—'}"
+            )
     else:
-        text = (
-            f"<b>Ваша информация в Telegram:</b>\n\n"
-            f"<b>ID:</b> <code>{user_id}</code>\n"
-            f"<b>Username:</b> @{username if username else 'не установлен'}\n"
-            f"<b>Имя:</b> {first_name} {last_name}".strip()
-        )
-    
+        user_id = message.from_user.id
+        username = message.from_user.username
+        first_name = message.from_user.first_name or ""
+        last_name = message.from_user.last_name or ""
+
+        if lang == "en":
+            text = (
+                "<b>Your Telegram Information:</b>\n\n"
+                f"<b>ID:</b> <code>{user_id}</code>\n"
+                f"<b>Username:</b> {'@' + username if username else 'not set'}\n"
+                f"<b>Name:</b> {f'{first_name} {last_name}'.strip() or '—'}"
+            )
+        else:
+            text = (
+                "<b>Ваша информация в Telegram:</b>\n\n"
+                f"<b>ID:</b> <code>{user_id}</code>\n"
+                f"<b>Username:</b> {'@' + username if username else 'не установлен'}\n"
+                f"<b>Имя:</b> {f'{first_name} {last_name}'.strip() or '—'}"
+            )
+
     await message.answer(text, parse_mode=ParseMode.HTML)
 
 
