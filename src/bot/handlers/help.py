@@ -124,6 +124,10 @@ async def cmd_help(message: Message, session_maker: async_sessionmaker[AsyncSess
 @router.message(Command("whoami"))
 async def cmd_whoami(message: Message) -> None:
     """Показать Telegram ID пользователя."""
+    import logging
+    logger = logging.getLogger("innopls-bot")
+    logger.info(f"Команда /whoami вызвана пользователем {message.from_user.id}")
+    
     lang = (get_lang(message.from_user.id) or "ru").lower()
     
     user_id = message.from_user.id
@@ -146,6 +150,7 @@ async def cmd_whoami(message: Message) -> None:
             f"<b>Имя:</b> {first_name} {last_name}".strip()
         )
     
+    logger.info(f"Отправка ответа на /whoami пользователю {user_id}")
     await message.answer(text, parse_mode=ParseMode.HTML)
 
 
