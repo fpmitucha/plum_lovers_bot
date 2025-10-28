@@ -169,6 +169,18 @@ def _resolve_photo_source(src: str) -> Union[str, FSInputFile]:
     return s
 
 
+# --- универсальный фолбэк при отсутствии баннеров/ошибке Telegram ---
+async def _answer_photo_or_text(message: Message, media: InputMediaPhoto, reply_markup: Optional[InlineKeyboardMarkup]) -> None:
+    """
+    Пытаемся отправить фото. Если файла нет или Telegram не принимает — отправляем просто текст.
+    """
+    try:
+        await message.answer_photo(media.media, caption=media.caption, parse_mode=media.parse_mode, reply_markup=reply_markup)
+    except Exception:
+        caption = media.caption or ""
+        await message.answer(caption, parse_mode=media.parse_mode or ParseMode.HTML, reply_markup=reply_markup)
+
+
 async def _is_registered_and_ensure_profile(repo: Repo, user_id: int, username: Optional[str]) -> bool:
     if await repo.profile_exists(user_id):
         return True
@@ -427,7 +439,7 @@ async def cmd_menu(message: Message, session_maker: async_sessionmaker[AsyncSess
         lang = "ru"
     show_join, show_profile = await _flags_for_menu(session_maker, message.from_user.id, message.from_user.username)
     media, kb = _render_user_menu(lang) if (show_profile and not show_join) else _render_guest_menu(lang)
-    await message.answer_photo(media.media, caption=media.caption, parse_mode=media.parse_mode, reply_markup=kb)
+    await _answer_photo_or_text(message, media, kb)  # ← безопасная отправка
 
 
 @router.callback_query(StartCB.filter(F.action == "lang"))
@@ -442,7 +454,7 @@ async def on_lang_selected(cb: CallbackQuery, callback_data: StartCB,
     try:
         await cb.message.edit_media(media=media, reply_markup=kb)
     except Exception:
-        await cb.message.answer_photo(media.media, caption=media.caption, parse_mode=media.parse_mode, reply_markup=kb)
+        await _answer_photo_or_text(cb.message, media, kb)
         with contextlib.suppress(Exception):
             await cb.message.delete()
     with contextlib.suppress(TelegramBadRequest):
@@ -475,8 +487,7 @@ async def on_info(cb: CallbackQuery, callback_data: StartCB, session_maker: asyn
     try:
         await cb.message.edit_media(media=media, reply_markup=_back_kb(lang))
     except Exception:
-        await cb.message.answer_photo(media.media, caption=media.caption, parse_mode=ParseMode.HTML,
-                                      reply_markup=_back_kb(lang))
+        await _answer_photo_or_text(cb.message, media, _back_kb(lang))
         with contextlib.suppress(Exception):
             await cb.message.delete()
     with contextlib.suppress(TelegramBadRequest):
@@ -493,7 +504,8 @@ async def on_rules(cb: CallbackQuery, callback_data: StartCB) -> None:
     try:
         await cb.message.edit_media(media=media, reply_markup=_back_kb(lang))
     except Exception:
-        await cb.message.answer_photo(media.media, caption=media.caption, reply_markup=_back_kb(lang))
+        # безопасный фолбэк — просто ссылку на правила текстом
+        await cb.message.answer(media.caption or "", reply_markup=_back_kb(lang))
         with contextlib.suppress(Exception):
             await cb.message.delete()
     with contextlib.suppress(TelegramBadRequest):
@@ -511,8 +523,7 @@ async def on_help(cb: CallbackQuery, callback_data: StartCB) -> None:
     try:
         await cb.message.edit_media(media=media, reply_markup=_help_kb(lang))
     except Exception:
-        await cb.message.answer_photo(media.media, caption=media.caption, parse_mode=media.parse_mode,
-                                      reply_markup=_help_kb(lang))
+        await _answer_photo_or_text(cb.message, media, _help_kb(lang))
         with contextlib.suppress(Exception):
             await cb.message.delete()
     with contextlib.suppress(TelegramBadRequest):
@@ -531,8 +542,7 @@ async def on_a2t(cb: CallbackQuery, callback_data: StartCB, state: FSMContext) -
     try:
         await cb.message.edit_media(media=media, reply_markup=_a2t_lang_kb(lang))
     except Exception:
-        await cb.message.answer_photo(media.media, caption=media.caption, parse_mode=media.parse_mode,
-                                      reply_markup=_a2t_lang_kb(lang))
+        await _answer_photo_or_text(cb.message, media, _a2t_lang_kb(lang))
         with contextlib.suppress(Exception):
             await cb.message.delete()
     with contextlib.suppress(TelegramBadRequest):
@@ -630,7 +640,7 @@ async def on_a2t_audio(message: Message, state: FSMContext, session_maker: async
     await state.clear()
     show_join, show_profile = await _flags_for_menu(session_maker, message.from_user.id, message.from_user.username)
     media, kb = _render_user_menu(ui_lang) if (show_profile and not show_join) else _render_guest_menu(ui_lang)
-    await message.answer_photo(media.media, caption=media.caption, parse_mode=media.parse_mode, reply_markup=kb)
+    await _answer_photo_or_text(message, media, kb)  # ← безопасная отправка
 
 
 @router.callback_query(StartCB.filter(F.action.in_({"gpt", "settings"})))
@@ -660,8 +670,7 @@ async def on_placeholders(cb: CallbackQuery, callback_data: StartCB) -> None:
     try:
         await cb.message.edit_media(media=media, reply_markup=_back_kb(lang))
     except Exception:
-        await cb.message.answer_photo(media.media, caption=media.caption, parse_mode=ParseMode.HTML,
-                                      reply_markup=_back_kb(lang))
+        await _answer_photo_or_text(cb.message, media, _back_kb(lang))
         with contextlib.suppress(Exception):
             await cb.message.delete()
     with contextlib.suppress(TelegramBadRequest):
@@ -679,7 +688,7 @@ async def on_back(cb: CallbackQuery, callback_data: StartCB, session_maker: asyn
     try:
         await cb.message.edit_media(media=media, reply_markup=kb)
     except Exception:
-        await cb.message.answer_photo(media.media, caption=media.caption, parse_mode=media.parse_mode, reply_markup=kb)
+        await _answer_photo_or_text(cb.message, media, kb)
         with contextlib.suppress(Exception):
             await cb.message.delete()
     with contextlib.suppress(TelegramBadRequest):

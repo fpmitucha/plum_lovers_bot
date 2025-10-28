@@ -5,6 +5,7 @@ from typing import Optional, Iterable, Tuple
 
 from sqlalchemy import select, update, delete, and_, func, text, inspect as sa_inspect
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import OperationalError  # ← добавлено
 
 from bot.models import (
     Roster,
@@ -55,11 +56,11 @@ class Repo:
         await self.session.execute(text("""
         CREATE TABLE IF NOT EXISTS karma_events (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id   INTEGER NOT NULL,   -- кому начислили/списали
-            actor_id  INTEGER,            -- кто поставил (+/реакцию), если известно
+            user_id   INTEGER NOT NULL,
+            actor_id  INTEGER,
             chat_id   INTEGER,
             message_id INTEGER,
-            delta     INTEGER NOT NULL,   -- +N или -N
+            delta     INTEGER NOT NULL,
             reason    TEXT,
             created_at TEXT NOT NULL
         )
@@ -70,8 +71,8 @@ class Repo:
             chat_id    INTEGER NOT NULL,
             message_id INTEGER NOT NULL,
             user_id    INTEGER NOT NULL,
-            pos_count  INTEGER NOT NULL DEFAULT 0,  -- суммарные положительные реакции
-            neg_count  INTEGER NOT NULL DEFAULT 0,  -- суммарные отрицательные реакции
+            pos_count  INTEGER NOT NULL DEFAULT 0,
+            neg_count  INTEGER NOT NULL DEFAULT 0,
             PRIMARY KEY (chat_id, message_id)
         )
         """))
@@ -98,8 +99,15 @@ class Repo:
         res = await self.session.execute(text(f"PRAGMA table_info({table})"))
         cols = [row[1] for row in res.all()]
         if "karma" not in cols:
-            await self.session.execute(text(f"ALTER TABLE {table} ADD COLUMN karma INTEGER"))
-            # Инициализируем поле karma значением 10 для всех существующих записей
+            # Возможна гонка или предыдущий запуск уже добавил колонку —
+            # поэтому защищаемся от дубликата.
+            try:
+                await self.session.execute(text(f"ALTER TABLE {table} ADD COLUMN karma INTEGER"))
+            except OperationalError as e:
+                msg = str(e).lower()
+                if "duplicate column name" not in msg:
+                    raise
+            # Инициализируем значение по умолчанию
             await self.session.execute(text(f"UPDATE {table} SET karma = 10 WHERE karma IS NULL"))
             await self.session.commit()
 
