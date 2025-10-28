@@ -131,6 +131,10 @@ async def cmd_help(message: Message, session_maker: async_sessionmaker[AsyncSess
 @router.message(Command("whoami"))
 async def cmd_whoami(message: Message, command: CommandObject) -> None:
     """Показать Telegram ID пользователя."""
+    import logging
+    logger = logging.getLogger("innopls-bot")
+    logger.info(f"Команда /whoami вызвана пользователем {message.from_user.id}")
+    
     lang = (get_lang(message.from_user.id) or "ru").lower()
     if command.args and command.args.strip():
         username_to_check = command.args.strip().lstrip("@")
