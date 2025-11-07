@@ -2,8 +2,9 @@ aiogram>=3,<4
 pydantic>=2,<3
 pydantic-settings>=2,<3
 SQLAlchemy>=2,<3
+greenlet>=3,<4
 aiosqlite>=0.19
 python-dotenv>=1,<2
-pillow
-ffmpeg
-faster-whisper
+pillow>=10,<12
+faster-whisper>=1.0
+audioop-lts>=0.2; python_version>="3.13"
