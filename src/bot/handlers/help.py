@@ -138,6 +138,11 @@ async def cmd_whoami(message: Message, command: CommandObject) -> None:
     try:
         lang = (get_lang(message.from_user.id) or "ru").lower()
         logger.info(f"command object: {command}, command.args: {getattr(command, 'args', 'NO ARGS ATTR')}")
+        chat_id = getattr(getattr(message, "chat", None), "id", None)
+        if lang == "en":
+            chat_line = f"<b>Chat ID:</b> <code>{chat_id}</code>\n" if chat_id is not None else ""
+        else:
+            chat_line = f"<b>ID чата:</b> <code>{chat_id}</code>\n" if chat_id is not None else ""
         
         if command.args and command.args.strip():
             username_to_check = command.args.strip().lstrip("@")
@@ -165,6 +170,7 @@ async def cmd_whoami(message: Message, command: CommandObject) -> None:
                 text = (
                     f"<b>Telegram Information for <code>@{username_to_check}</code>:</b>\n\n"
                     f"<b>ID:</b> <code>{user_info['id']}</code>\n"
+                    f"{chat_line}"
                     f"<b>Username:</b> <code>{'@' + checked_username if checked_username else 'not set'}</code>\n"
                     f"<b>Name:</b> {f'{first_name} {last_name}'.strip() or '—'}"
                 )
@@ -172,6 +178,7 @@ async def cmd_whoami(message: Message, command: CommandObject) -> None:
                 text = (
                     f"<b>Информация о Telegram для <code>@{username_to_check}</code>:</b>\n\n"
                     f"<b>ID:</b> <code>{user_info['id']}</code>\n"
+                    f"{chat_line}"
                     f"<b>Username:</b> <code>{'@' + checked_username if checked_username else 'не установлен'}</code>\n"
                     f"<b>Имя:</b> {f'{first_name} {last_name}'.strip() or '—'}"
                 )
@@ -185,6 +192,7 @@ async def cmd_whoami(message: Message, command: CommandObject) -> None:
                 text = (
                     "<b>Your Telegram Information:</b>\n\n"
                     f"<b>ID:</b> <code>{user_id}</code>\n"
+                    f"{chat_line}"
                     f"<b>Username:</b> <code>{'@' + username if username else 'not set'}</code>\n"
                     f"<b>Name:</b> {f'{first_name} {last_name}'.strip() or '—'}"
                 )
@@ -192,6 +200,7 @@ async def cmd_whoami(message: Message, command: CommandObject) -> None:
                 text = (
                     "<b>Ваша информация в Telegram:</b>\n\n"
                     f"<b>ID:</b> <code>{user_id}</code>\n"
+                    f"{chat_line}"
                     f"<b>Username:</b> <code>{'@' + username if username else 'не установлен'}</code>\n"
                     f"<b>Имя:</b> {f'{first_name} {last_name}'.strip() or '—'}"
                 )
