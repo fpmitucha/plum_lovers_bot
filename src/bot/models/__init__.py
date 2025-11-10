@@ -14,6 +14,8 @@ from .models import (
     AnonDialog,
     AnonMessage,
     AnonPublicRequest,
+    FireIncident,
+    FireCounter,
 )
 
 __all__ = [
@@ -27,4 +29,6 @@ __all__ = [
     "AnonDialog",
     "AnonMessage",
     "AnonPublicRequest",
+    "FireIncident",
+    "FireCounter",
 ]

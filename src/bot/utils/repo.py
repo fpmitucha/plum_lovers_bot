@@ -17,6 +17,8 @@ from bot.models import (
     AnonDialog,
     AnonMessage,
     AnonPublicRequest,
+    FireIncident,
+    FireCounter,
 )
 
 # ---------- helpers ----------
@@ -802,3 +804,72 @@ class Repo:
             )
         )
         await self.session.commit()
+
+    # -------- FIRE INCIDENTS --------
+
+    async def create_fire_incident(
+        self,
+        *,
+        dorm_number: int,
+        user_id: int,
+        description: str | None,
+    ) -> FireIncident:
+        incident = FireIncident(
+            dorm_number=dorm_number,
+            user_id=user_id,
+            description=description,
+            status="pending",
+        )
+        self.session.add(incident)
+        await self.session.commit()
+        await self.session.refresh(incident)
+        return incident
+
+    async def get_fire_incident(self, incident_id: int) -> FireIncident | None:
+        res = await self.session.execute(select(FireIncident).where(FireIncident.id == incident_id))
+        return res.scalar_one_or_none()
+
+    async def update_fire_incident_status(
+        self,
+        *,
+        incident_id: int,
+        status: str,
+        processed_by: int,
+        comment: str | None = None,
+    ) -> None:
+        await self.session.execute(
+            update(FireIncident)
+            .where(FireIncident.id == incident_id)
+            .values(
+                status=status,
+                processed_at=now_str(),
+                processed_by=processed_by,
+                comment=comment,
+            )
+        )
+        await self.session.commit()
+
+    async def increment_fire_counter(self, dorm_number: int) -> int:
+        res = await self.session.execute(
+            select(FireCounter).where(FireCounter.dorm_number == dorm_number)
+        )
+        counter = res.scalar_one_or_none()
+        ts = now_str()
+        if counter:
+            new_total = (counter.total or 0) + 1
+            await self.session.execute(
+                update(FireCounter)
+                .where(FireCounter.dorm_number == dorm_number)
+                .values(total=new_total, updated_at=ts)
+            )
+        else:
+            new_total = 1
+            self.session.add(FireCounter(dorm_number=dorm_number, total=new_total, updated_at=ts))
+        await self.session.commit()
+        return new_total
+
+    async def get_fire_leaderboard(self) -> list[FireCounter]:
+        res = await self.session.execute(
+            select(FireCounter).order_by(FireCounter.total.desc(), FireCounter.dorm_number.asc())
+        )
+        return list(res.scalars().all())

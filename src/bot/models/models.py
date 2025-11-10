@@ -216,3 +216,31 @@ class AnonPublicRequest(Base):
     processed_at = Column(String, nullable=True)
     processed_by = Column(BigInteger, nullable=True)
     reason = Column(Text, nullable=True)
+
+
+class FireIncident(Base):
+    """
+    Заявка о сработавшей пожарной сигнализации в дорме.
+    """
+    __tablename__ = "fire_incidents"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    dorm_number = Column(Integer, nullable=False, index=True)
+    user_id = Column(BigInteger, nullable=False)
+    description = Column(Text, nullable=True)
+    status = Column(String, nullable=False, server_default=sa_text("'pending'"))  # pending|approved|rejected
+    created_at = Column(String, nullable=False, server_default=sa_text("(CURRENT_TIMESTAMP)"))
+    processed_at = Column(String, nullable=True)
+    processed_by = Column(BigInteger, nullable=True)
+    comment = Column(Text, nullable=True)
+
+
+class FireCounter(Base):
+    """
+    Счётчик подтверждённых пожарок по каждому дорму.
+    """
+    __tablename__ = "fire_counters"
+
+    dorm_number = Column(Integer, primary_key=True)
+    total = Column(Integer, nullable=False, server_default=sa_text("0"))
+    updated_at = Column(String, nullable=False, server_default=sa_text("(CURRENT_TIMESTAMP)"))
