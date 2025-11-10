@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Iterable, Tuple
 
-from sqlalchemy import select, update, delete, and_, func, text, inspect as sa_inspect
+from sqlalchemy import select, update, delete, and_, or_, func, text, inspect as sa_inspect
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import OperationalError  # ← добавлено
 
@@ -14,6 +14,9 @@ from bot.models import (
     Blacklist,
     Admin,
     Profile,
+    AnonDialog,
+    AnonMessage,
+    AnonPublicRequest,
 )
 
 # ---------- helpers ----------
@@ -688,4 +691,114 @@ class Repo:
 
     async def remove_admin(self, user_id: int) -> None:
         await self.session.execute(delete(Admin).where(Admin.user_id == user_id))
+        await self.session.commit()
+
+    # -------- ANON CHATS --------
+
+    async def create_anon_dialog(
+        self,
+        *,
+        dialog_code: str,
+        initiator_id: int,
+        target_id: int,
+        kind: str = "user",
+    ) -> AnonDialog:
+        dialog = AnonDialog(
+            dialog_code=dialog_code,
+            initiator_id=initiator_id,
+            target_id=target_id,
+            kind=kind,
+            status="active",
+        )
+        self.session.add(dialog)
+        await self.session.commit()
+        await self.session.refresh(dialog)
+        return dialog
+
+    async def get_anon_dialog_by_code(self, dialog_code: str) -> AnonDialog | None:
+        res = await self.session.execute(
+            select(AnonDialog).where(AnonDialog.dialog_code == dialog_code)
+        )
+        return res.scalar_one_or_none()
+
+    async def get_active_anon_dialog_for_user(
+        self,
+        user_id: int,
+        *,
+        kind: str | None = None,
+    ) -> AnonDialog | None:
+        stmt = (
+            select(AnonDialog)
+            .where(
+                and_(
+                    AnonDialog.status == "active",
+                    or_(AnonDialog.initiator_id == user_id, AnonDialog.target_id == user_id),
+                )
+            )
+            .order_by(AnonDialog.id.desc())
+            .limit(1)
+        )
+        if kind:
+            stmt = stmt.where(AnonDialog.kind == kind)
+        res = await self.session.execute(stmt)
+        return res.scalar_one_or_none()
+
+    async def close_anon_dialog(self, dialog_id: int) -> None:
+        await self.session.execute(
+            update(AnonDialog)
+            .where(AnonDialog.id == dialog_id)
+            .values(status="closed", closed_at=now_str())
+        )
+        await self.session.commit()
+
+    async def add_anon_message(
+        self,
+        *,
+        dialog_id: int,
+        sender_id: int,
+        recipient_id: int,
+        text: str,
+    ) -> AnonMessage:
+        msg = AnonMessage(
+            dialog_id=dialog_id,
+            sender_id=sender_id,
+            recipient_id=recipient_id,
+            text=text,
+        )
+        self.session.add(msg)
+        await self.session.commit()
+        await self.session.refresh(msg)
+        return msg
+
+    async def create_public_request(self, *, user_id: int, text: str) -> AnonPublicRequest:
+        req = AnonPublicRequest(user_id=user_id, text=text, status="pending")
+        self.session.add(req)
+        await self.session.commit()
+        await self.session.refresh(req)
+        return req
+
+    async def get_public_request(self, request_id: int) -> AnonPublicRequest | None:
+        res = await self.session.execute(
+            select(AnonPublicRequest).where(AnonPublicRequest.id == request_id)
+        )
+        return res.scalar_one_or_none()
+
+    async def update_public_request_status(
+        self,
+        *,
+        request_id: int,
+        status: str,
+        processed_by: int | None,
+        reason: str | None = None,
+    ) -> None:
+        await self.session.execute(
+            update(AnonPublicRequest)
+            .where(AnonPublicRequest.id == request_id)
+            .values(
+                status=status,
+                processed_at=now_str(),
+                processed_by=processed_by,
+                reason=reason,
+            )
+        )
         await self.session.commit()
