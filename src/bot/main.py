@@ -21,6 +21,8 @@ from bot.logging_config import setup_logging
 from bot.handlers import help as help_member
 from bot.handlers import start as start_handlers
 from bot.handlers import join as join_handlers
+from bot.handlers import anon as anon_handlers
+from bot.handlers import fire as fire_handlers
 from bot.handlers import admin as admin_handlers
 from bot.handlers import chat_member as chat_member_handlers
 from bot.handlers import cleanup as cleanup_handlers
@@ -42,6 +44,8 @@ async def set_bot_commands(bot: Bot) -> None:
             BotCommand(command="top", description="Топ пользователей по карме"),
             BotCommand(command="help", description="Помощь и информация"),
             BotCommand(command="whoami", description="Показать мой Telegram ID"),
+            BotCommand(command="fire", description="Сообщить о пожарке"),
+            BotCommand(command="firetop", description="Рейтинг пожарок"),
             # BotCommand(command="admin", description="Админ-панель"),
         ]
     )
@@ -94,6 +98,8 @@ async def main():
     dp.include_router(help_member.router)
     dp.include_router(start_handlers.router)
     dp.include_router(join_handlers.router)
+    dp.include_router(anon_handlers.router)
+    dp.include_router(fire_handlers.router)
     dp.include_router(top_router)
     dp.include_router(admin_handlers.router)
     dp.include_router(admin_karma.router)

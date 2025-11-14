@@ -11,6 +11,11 @@ from .models import (
     Blacklist,
     Admin,
     Profile,
+    AnonDialog,
+    AnonMessage,
+    AnonPublicRequest,
+    FireIncident,
+    FireCounter,
 )
 
 __all__ = [
@@ -21,4 +26,9 @@ __all__ = [
     "Blacklist",
     "Admin",
     "Profile",
+    "AnonDialog",
+    "AnonMessage",
+    "AnonPublicRequest",
+    "FireIncident",
+    "FireCounter",
 ]

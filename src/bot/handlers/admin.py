@@ -37,12 +37,19 @@ from sqlalchemy import text
 
 from bot.config import settings
 from bot.utils.repo import Repo
+from bot.utils.admins import main_admin_id_from_settings
 from bot.utils.parsing import parse_slug, normalize_slug
 
 router = Router(name="admin_menu")
 
-# Главный админ
-MAIN_ADMIN_ID = 8421106062
+# Главный админ (берём из настроек/списков)
+def _main_admin_id() -> int | None:
+    return main_admin_id_from_settings()
+
+
+def _is_main_admin(user_id: int) -> bool:
+    admin_id = _main_admin_id()
+    return bool(admin_id and user_id == admin_id)
 # Размер страницы
 PAGE_SIZE = 20
 
@@ -86,7 +93,9 @@ async def _get_all_admin_ids(repo: Repo) -> set[int]:
     Собрать множество админов: из настроек, из БД и главного админа.
     """
     ids = set(getattr(settings, "ADMIN_USER_IDS", []) or [])
-    ids.add(MAIN_ADMIN_ID)
+    main_admin = _main_admin_id()
+    if main_admin:
+        ids.add(main_admin)
     for a in await repo.list_admins():
         ids.add(a.user_id)
     return ids
@@ -96,7 +105,8 @@ def _is_admin_cached(admin_ids: set[int], user_id: int) -> bool:
     """
     Быстрая проверка наличия прав админа по уже собранному множеству.
     """
-    return (user_id in admin_ids) or (user_id == MAIN_ADMIN_ID)
+    main_admin = _main_admin_id()
+    return (user_id in admin_ids) or (main_admin and user_id == main_admin)
 
 
 def _menu_kb(can_manage_admins: bool) -> InlineKeyboardBuilder:
@@ -223,7 +233,7 @@ async def cmd_admin(message: Message, session_maker: async_sessionmaker[AsyncSes
         await message.answer("Доступ запрещён.")
         return
 
-    kb = _menu_kb(can_manage_admins=(message.from_user.id == MAIN_ADMIN_ID))
+    kb = _menu_kb(can_manage_admins=_is_main_admin(message.from_user.id))
     await message.answer("Админская панель. Выберите действие:", reply_markup=kb.as_markup())
 
 
@@ -239,7 +249,7 @@ async def cb_menu(cb: CallbackQuery, session_maker: async_sessionmaker[AsyncSess
         await cb.answer("Нет доступа", show_alert=True)
         return
 
-    kb = _menu_kb(can_manage_admins=(cb.from_user.id == MAIN_ADMIN_ID))
+    kb = _menu_kb(can_manage_admins=_is_main_admin(cb.from_user.id))
     await cb.message.edit_text("Админская панель. Выберите действие:", reply_markup=kb.as_markup())
     await cb.answer()
 
@@ -590,7 +600,7 @@ async def cb_admins(
     """
     Показать список админов и действия (только главный).
     """
-    if cb.from_user.id != MAIN_ADMIN_ID:
+    if not _is_main_admin(cb.from_user.id):
         await cb.answer("Недостаточно прав", show_alert=True)
         return
 
@@ -599,11 +609,15 @@ async def cb_admins(
         rows = await repo.list_admins()
 
     static = set(getattr(settings, "ADMIN_USER_IDS", []) or [])
-    static.add(MAIN_ADMIN_ID)
+    main_admin = _main_admin_id()
+    if main_admin:
+        static.add(main_admin)
     db_ids = [r.user_id for r in rows]
 
-    lines = ["👥 Администраторы:\n", f"— Главный: <code>{MAIN_ADMIN_ID}</code>"]
-    statics = sorted(static - {MAIN_ADMIN_ID})
+    lines = ["👥 Администраторы:\n"]
+    if main_admin:
+        lines.append(f"— Главный: <code>{main_admin}</code>")
+    statics = sorted(static - {main_admin}) if main_admin else sorted(static)
     if statics:
         lines.append("— Из настроек: " + ", ".join(f"<code>{i}</code>" for i in statics))
     if db_ids:
@@ -620,7 +634,7 @@ async def cb_admin_add(cb: CallbackQuery, state: FSMContext) -> None:
     """
     Запрос user_id для добавления админа (только главный).
     """
-    if cb.from_user.id != MAIN_ADMIN_ID:
+    if not _is_main_admin(cb.from_user.id):
         await cb.answer("Недостаточно прав", show_alert=True)
         return
     await state.set_state(AdminStates.waiting_admin_user_id)
@@ -637,7 +651,7 @@ async def on_admin_add_user_id(
     """
     Принять user_id и добавить в таблицу админов.
     """
-    if message.from_user.id != MAIN_ADMIN_ID:
+    if not _is_main_admin(message.from_user.id):
         await state.clear()
         await message.answer("Недостаточно прав.")
         return
@@ -661,7 +675,7 @@ async def cb_admin_del(cb: CallbackQuery, state: FSMContext) -> None:
     """
     Запрос user_id для удаления админа (только главный).
     """
-    if cb.from_user.id != MAIN_ADMIN_ID:
+    if not _is_main_admin(cb.from_user.id):
         await cb.answer("Недостаточно прав", show_alert=True)
         return
     await state.set_state(AdminStates.waiting_admin_del_user_id)
@@ -678,7 +692,7 @@ async def on_admin_del_user_id(
     """
     Принять user_id и удалить из администраторов.
     """
-    if message.from_user.id != MAIN_ADMIN_ID:
+    if not _is_main_admin(message.from_user.id):
         await state.clear()
         await message.answer("Недостаточно прав.")
         return
@@ -689,7 +703,7 @@ async def on_admin_del_user_id(
         await message.answer("Ожидается целое число user_id. Попробуйте ещё раз.")
         return
 
-    if uid == MAIN_ADMIN_ID:
+    if _is_main_admin(uid):
         await message.answer("Нельзя удалить главного администратора.")
         return
 
@@ -770,7 +784,7 @@ async def cmd_backup_database(message: Message, session_maker: async_sessionmake
     2. Текстовый дамп содержимого всех таблиц
     """
     # Проверка доступа - только главный админ
-    if message.from_user.id != MAIN_ADMIN_ID:
+    if not _is_main_admin(message.from_user.id):
         await message.answer("❌ Доступ запрещён. Команда доступна только главному администратору.")
         return
 

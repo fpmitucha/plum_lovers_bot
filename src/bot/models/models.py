@@ -18,10 +18,11 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
-    text,
     UniqueConstraint,
     Column,
+    ForeignKey,
 )
+from sqlalchemy.sql import text as sa_text
 from sqlalchemy.orm import declarative_base
 
 Base = declarative_base()
@@ -40,7 +41,7 @@ class Roster(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     slug = Column(String, unique=True, index=True, nullable=False)
-    created_at = Column(String, nullable=False, server_default=text("(CURRENT_TIMESTAMP)"))
+    created_at = Column(String, nullable=False, server_default=sa_text("(CURRENT_TIMESTAMP)"))
 
 
 class Application(Base):
@@ -65,11 +66,11 @@ class Application(Base):
     username = Column(String, nullable=True)
     slug = Column(String, nullable=False)
 
-    status = Column(String, nullable=False, server_default=text("'pending'"))
+    status = Column(String, nullable=False, server_default=sa_text("'pending'"))
     reason = Column(Text, nullable=True)
 
-    created_at = Column(String, nullable=False, server_default=text("(CURRENT_TIMESTAMP)"))
-    updated_at = Column(String, nullable=False, server_default=text("(CURRENT_TIMESTAMP)"))
+    created_at = Column(String, nullable=False, server_default=sa_text("(CURRENT_TIMESTAMP)"))
+    updated_at = Column(String, nullable=False, server_default=sa_text("(CURRENT_TIMESTAMP)"))
 
 
 class Invite(Base):
@@ -94,8 +95,8 @@ class Invite(Base):
     invite_link = Column(String, nullable=False, unique=True)
     expires_at = Column(String, nullable=False)
 
-    created_at = Column(String, nullable=False, server_default=text("(CURRENT_TIMESTAMP)"))
-    updated_at = Column(String, nullable=False, server_default=text("(CURRENT_TIMESTAMP)"))
+    created_at = Column(String, nullable=False, server_default=sa_text("(CURRENT_TIMESTAMP)"))
+    updated_at = Column(String, nullable=False, server_default=sa_text("(CURRENT_TIMESTAMP)"))
 
 
 class Blacklist(Base):
@@ -115,7 +116,7 @@ class Blacklist(Base):
     user_id = Column(BigInteger, index=True, nullable=False, unique=True)
     reason = Column(Text, nullable=True)
 
-    created_at = Column(String, nullable=False, server_default=text("(CURRENT_TIMESTAMP)"))
+    created_at = Column(String, nullable=False, server_default=sa_text("(CURRENT_TIMESTAMP)"))
 
     __table_args__ = (
         UniqueConstraint("user_id", name="uq_blacklist_user"),
@@ -135,7 +136,7 @@ class Admin(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(BigInteger, index=True, unique=True, nullable=False)
-    created_at = Column(String, nullable=False, server_default=text("(CURRENT_TIMESTAMP)"))
+    created_at = Column(String, nullable=False, server_default=sa_text("(CURRENT_TIMESTAMP)"))
 
     __table_args__ = (
         UniqueConstraint("user_id", name="uq_admin_user"),
@@ -159,11 +160,87 @@ class Profile(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(BigInteger, index=True, unique=True, nullable=False)
     username = Column(String, nullable=True)
-    points = Column(Integer, nullable=False, server_default=text("10"))
+    points = Column(Integer, nullable=False, server_default=sa_text("10"))
 
-    created_at = Column(String, nullable=False, server_default=text("(CURRENT_TIMESTAMP)"))
-    updated_at = Column(String, nullable=False, server_default=text("(CURRENT_TIMESTAMP)"))
+    created_at = Column(String, nullable=False, server_default=sa_text("(CURRENT_TIMESTAMP)"))
+    updated_at = Column(String, nullable=False, server_default=sa_text("(CURRENT_TIMESTAMP)"))
 
     __table_args__ = (
         UniqueConstraint("user_id", name="uq_profile_user"),
     )
+
+
+class AnonDialog(Base):
+    """
+    Анонимный диалог: пользователь ↔ пользователь/админ.
+    kind: 'user' | 'admin'
+    status: 'active' | 'closed'
+    """
+    __tablename__ = "anon_dialogs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    dialog_code = Column(String, nullable=False, unique=True, index=True)
+    kind = Column(String, nullable=False, server_default=sa_text("'user'"))
+    initiator_id = Column(BigInteger, nullable=False, index=True)
+    target_id = Column(BigInteger, nullable=False, index=True)
+    status = Column(String, nullable=False, server_default=sa_text("'active'"))
+    created_at = Column(String, nullable=False, server_default=sa_text("(CURRENT_TIMESTAMP)"))
+    closed_at = Column(String, nullable=True)
+
+
+class AnonMessage(Base):
+    """
+    Сообщения анонимного диалога, сохраняем для аудита/повторов.
+    """
+    __tablename__ = "anon_messages"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    dialog_id = Column(Integer, ForeignKey("anon_dialogs.id", ondelete="CASCADE"), index=True, nullable=False)
+    sender_id = Column(BigInteger, nullable=False)
+    recipient_id = Column(BigInteger, nullable=False)
+    text = Column(Text, nullable=False)
+    created_at = Column(String, nullable=False, server_default=sa_text("(CURRENT_TIMESTAMP)"))
+
+
+class AnonPublicRequest(Base):
+    """
+    Очередь анонимных сообщений в общий чат (с модерацией).
+    """
+    __tablename__ = "anon_public_requests"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(BigInteger, nullable=False, index=True)
+    text = Column(Text, nullable=False)
+    status = Column(String, nullable=False, server_default=sa_text("'pending'"))  # pending|approved|rejected|failed
+    created_at = Column(String, nullable=False, server_default=sa_text("(CURRENT_TIMESTAMP)"))
+    processed_at = Column(String, nullable=True)
+    processed_by = Column(BigInteger, nullable=True)
+    reason = Column(Text, nullable=True)
+
+
+class FireIncident(Base):
+    """
+    Заявка о сработавшей пожарной сигнализации в дорме.
+    """
+    __tablename__ = "fire_incidents"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    dorm_number = Column(Integer, nullable=False, index=True)
+    user_id = Column(BigInteger, nullable=False)
+    description = Column(Text, nullable=True)
+    status = Column(String, nullable=False, server_default=sa_text("'pending'"))  # pending|approved|rejected
+    created_at = Column(String, nullable=False, server_default=sa_text("(CURRENT_TIMESTAMP)"))
+    processed_at = Column(String, nullable=True)
+    processed_by = Column(BigInteger, nullable=True)
+    comment = Column(Text, nullable=True)
+
+
+class FireCounter(Base):
+    """
+    Счётчик подтверждённых пожарок по каждому дорму.
+    """
+    __tablename__ = "fire_counters"
+
+    dorm_number = Column(Integer, primary_key=True)
+    total = Column(Integer, nullable=False, server_default=sa_text("0"))
+    updated_at = Column(String, nullable=False, server_default=sa_text("(CURRENT_TIMESTAMP)"))
