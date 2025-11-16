@@ -35,21 +35,24 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
 from sqlalchemy import text as sql_text
 
 from bot.config import settings
-from bot.keyboards.common import JoinCB, CabCB
+from bot.keyboards.common import JoinCB, CabCB, SettingsCB
 from bot.services.i18n import set_lang, get_lang
 from bot.utils.repo import Repo, now_str
 
 router = Router(name="start")
 
-START_BANNER       = "./data/pls_start_banner_600x400.png"
-AFTER_LANG_BANNER  = "./data/pls_afterchangelanguage_banner.png"
-JOIN_BANNER        = {"ru": "./data/pls_join_ru_banner_600x400.png", "en": "./data/pls_join_en_banner_600x400.png"}
-INFO_BANNER        = "./data/pls_info_banner_600x400.png"
-RULES_BANNER       = {"ru": "./data/pls_rules_ru_600x400.png", "en": "./data/pls_rules_en_600x400.png"}
-HELP_BANNER        = "./data/pls_help_600x400.png"
-A2T_BANNER         = "./data/pls_a2t_600x400.png"
-GPT_BANNER         = "./data/pls_with_gpt_600x400.png"
-SET_BANNER         = "./data/pls_settings_600x400.png"
+START_BANNER = "./data/pls_start_banner_600x400.png"
+AFTER_LANG_BANNER = "./data/pls_afterchangelanguage_banner.png"
+JOIN_BANNER = {
+    "ru": "./data/pls_join_ru_banner_600x400.png",
+    "en": "./data/pls_join_en_banner_600x400.png",
+}
+INFO_BANNER = "./data/pls_info_banner_600x400.png"
+RULES_BANNER = {"ru": "./data/pls_rules_ru_600x400.png", "en": "./data/pls_rules_en_600x400.png"}
+HELP_BANNER = "./data/pls_help_600x400.png"
+A2T_BANNER = "./data/pls_a2t_600x400.png"
+GPT_BANNER = "./data/pls_with_gpt_600x400.png"
+SET_BANNER = "./data/pls_settings_600x400.png"
 
 
 class A2TStates(StatesGroup):
@@ -64,6 +67,7 @@ class StartCB(CallbackData, prefix="start"):
       rules, help, a2t, a2t_lang, gpt, settings
     value: опционально – язык ('ru'|'en'|'auto') или lang для back
     """
+
     action: str
     value: Optional[str] = None
 
@@ -122,7 +126,6 @@ _T = {
     "btn_gpt": {"ru": "⚡ Chat GPT 5", "en": "⚡ Chat GPT 5"},
     "btn_settings": {"ru": "⚙️ Настройки", "en": "⚙️ Settings"},
     "btn_back": {"ru": "⬅️ Назад", "en": "⬅️ Back"},
-
     # Помощь гостям
     "help_text": {
         "ru": (
@@ -137,7 +140,6 @@ _T = {
         ),
     },
     "btn_help_join": {"ru": "✅ Вступить в клуб", "en": "✅ Join the club"},
-
     # A2T
     "a2t_prompt": {
         "ru": "Выбери язык аудио, затем отправь файл:",
@@ -170,29 +172,43 @@ def _resolve_photo_source(src: str) -> Union[str, FSInputFile]:
 
 
 # --- универсальный фолбэк при отсутствии баннеров/ошибке Telegram ---
-async def _answer_photo_or_text(message: Message, media: InputMediaPhoto, reply_markup: Optional[InlineKeyboardMarkup]) -> None:
+async def _answer_photo_or_text(
+    message: Message, media: InputMediaPhoto, reply_markup: Optional[InlineKeyboardMarkup]
+) -> None:
     """
     Пытаемся отправить фото. Если файла нет или Telegram не принимает — отправляем просто текст.
     """
     try:
-        await message.answer_photo(media.media, caption=media.caption, parse_mode=media.parse_mode, reply_markup=reply_markup)
+        await message.answer_photo(
+            media.media,
+            caption=media.caption,
+            parse_mode=media.parse_mode,
+            reply_markup=reply_markup,
+        )
     except Exception:
         caption = media.caption or ""
-        await message.answer(caption, parse_mode=media.parse_mode or ParseMode.HTML, reply_markup=reply_markup)
+        await message.answer(
+            caption, parse_mode=media.parse_mode or ParseMode.HTML, reply_markup=reply_markup
+        )
 
 
-async def _is_registered_and_ensure_profile(repo: Repo, user_id: int, username: Optional[str]) -> bool:
+async def _is_registered_and_ensure_profile(
+    repo: Repo, user_id: int, username: Optional[str]
+) -> bool:
     if await repo.profile_exists(user_id):
         return True
     app = await repo.get_last_application_for_user(user_id)
     if app and (app.status or "").lower() == "done":
-        await repo.ensure_profile(user_id=user_id, username=username, slug=getattr(app, "slug", None))
+        await repo.ensure_profile(
+            user_id=user_id, username=username, slug=getattr(app, "slug", None)
+        )
         return True
     return False
 
 
-async def _flags_for_menu(session_maker: async_sessionmaker[AsyncSession], user_id: int, username: Optional[str]) -> \
-tuple[bool, bool]:
+async def _flags_for_menu(
+    session_maker: async_sessionmaker[AsyncSession], user_id: int, username: Optional[str]
+) -> tuple[bool, bool]:
     async with session_maker() as s:
         repo = Repo(s)
         is_reg = await _is_registered_and_ensure_profile(repo, user_id, username)
@@ -224,7 +240,10 @@ def _user_menu_kb(lang: str) -> InlineKeyboardMarkup:
     kb.button(text=_T["btn_a2t"][lang], callback_data=StartCB(action="a2t", value=lang).pack())
     kb.button(text=_T["btn_gpt"][lang], callback_data=StartCB(action="gpt", value=lang).pack())
     kb.button(text=_T["btn_help"][lang], callback_data=StartCB(action="help", value=lang).pack())
-    kb.button(text=_T["btn_settings"][lang], callback_data=StartCB(action="settings", value=lang).pack())
+    kb.button(
+        text=_T["btn_settings"][lang],
+        callback_data=SettingsCB(action="open", value=lang).pack(),
+    )
     kb.adjust(2, 2, 2)
     return kb.as_markup()
 
@@ -232,7 +251,13 @@ def _user_menu_kb(lang: str) -> InlineKeyboardMarkup:
 def _back_kb(lang: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text=_T["btn_back"][lang], callback_data=StartCB(action="back", value=lang).pack())]]
+            [
+                InlineKeyboardButton(
+                    text=_T["btn_back"][lang],
+                    callback_data=StartCB(action="back", value=lang).pack(),
+                )
+            ]
+        ]
     )
 
 
@@ -248,7 +273,9 @@ def _a2t_lang_kb(lang: str) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     kb.button(text=_T["a2t_ru"][lang], callback_data=StartCB(action="a2t_lang", value="ru").pack())
     kb.button(text=_T["a2t_en"][lang], callback_data=StartCB(action="a2t_lang", value="en").pack())
-    kb.button(text=_T["a2t_auto"][lang], callback_data=StartCB(action="a2t_lang", value="auto").pack())
+    kb.button(
+        text=_T["a2t_auto"][lang], callback_data=StartCB(action="a2t_lang", value="auto").pack()
+    )
     kb.button(text=_T["btn_back"][lang], callback_data=StartCB(action="back", value=lang).pack())
     kb.adjust(3, 1)
     return kb.as_markup()
@@ -274,6 +301,7 @@ def _render_user_menu(lang: str) -> tuple[InputMediaPhoto, InlineKeyboardMarkup]
 
 def _have_exe(name: str) -> bool:
     from shutil import which
+
     return which(name) is not None
 
 
@@ -281,7 +309,19 @@ def _ffmpeg_convert_to_wav(src_path: str, dst_path: str, *, rate: int = 16000) -
     if not _have_exe("ffmpeg"):
         return False
     try:
-        cmd = ["ffmpeg", "-y", "-i", src_path, "-ac", "1", "-ar", str(rate), "-acodec", "pcm_s16le", dst_path]
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-i",
+            src_path,
+            "-ac",
+            "1",
+            "-ar",
+            str(rate),
+            "-acodec",
+            "pcm_s16le",
+            dst_path,
+        ]
         subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
         return os.path.exists(dst_path) and os.path.getsize(dst_path) > 44
     except Exception:
@@ -298,7 +338,8 @@ def _rms_is_silent(wav_path: str) -> bool:
 
 
 async def _a2t_db_ensure(s: AsyncSession) -> None:
-    await s.execute(sql_text("""
+    await s.execute(
+        sql_text("""
         CREATE TABLE IF NOT EXISTS a2t_jobs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL,
@@ -313,16 +354,20 @@ async def _a2t_db_ensure(s: AsyncSession) -> None:
             text_len INTEGER,
             error TEXT
         )
-    """))
+    """)
+    )
     await s.commit()
 
 
 async def _a2t_db_insert(s: AsyncSession, *, user_id: int, lang: str, file_path: str) -> int:
     await _a2t_db_ensure(s)
-    await s.execute(sql_text("""
+    await s.execute(
+        sql_text("""
         INSERT INTO a2t_jobs (user_id, lang, status, file_path, created_at)
         VALUES (:uid, :lang, 'downloaded', :path, :ts)
-    """), {"uid": user_id, "lang": lang, "path": file_path, "ts": now_str()})
+    """),
+        {"uid": user_id, "lang": lang, "path": file_path, "ts": now_str()},
+    )
     rid = await s.execute(sql_text("SELECT last_insert_rowid()"))
     job_id = int(rid.scalar())
     await s.commit()
@@ -339,7 +384,9 @@ async def _a2t_db_update(s: AsyncSession, job_id: int, **fields) -> None:
     await s.commit()
 
 
-async def _transcribe_audio(file_path: str, lang_code: str | None) -> Tuple[str, Optional[str], Optional[float]]:
+async def _transcribe_audio(
+    file_path: str, lang_code: str | None
+) -> Tuple[str, Optional[str], Optional[float]]:
     """
     Возвращает: (text, backend, audio_seconds)
     """
@@ -353,40 +400,46 @@ async def _transcribe_audio(file_path: str, lang_code: str | None) -> Tuple[str,
         with wave.open(src_for_stt, "rb") as wf:
             audio_seconds = wf.getnframes() / float(max(wf.getframerate(), 1))
             if audio_seconds < 1.2:
-                with contextlib.suppress(Exception): os.remove(normalized_wav)
+                with contextlib.suppress(Exception):
+                    os.remove(normalized_wav)
                 return "", None, audio_seconds
     except Exception:
         pass
 
     if src_for_stt.endswith(".wav") and _rms_is_silent(src_for_stt):
-        with contextlib.suppress(Exception): os.remove(normalized_wav)
+        with contextlib.suppress(Exception):
+            os.remove(normalized_wav)
         return "", None, audio_seconds
 
     lang = None if (lang_code in (None, "", "auto")) else lang_code
 
     try:
         from faster_whisper import WhisperModel  # type: ignore
+
         model = WhisperModel("tiny", device="cpu", compute_type="int8")
         segments, _info = model.transcribe(
             src_for_stt,
             language=lang,
             vad_filter=True,
-            vad_parameters={"min_silence_duration_ms": 400}
+            vad_parameters={"min_silence_duration_ms": 400},
         )
         text = " ".join((seg.text or "").strip() for seg in segments if (seg.text or "").strip())
         if text.strip():
-            with contextlib.suppress(Exception): os.remove(normalized_wav)
+            with contextlib.suppress(Exception):
+                os.remove(normalized_wav)
             return text.strip(), "faster-whisper(tiny)", audio_seconds
     except Exception:
         pass
 
     try:
         import whisper  # type: ignore
+
         model = whisper.load_model("tiny")
         result = model.transcribe(src_for_stt, language=lang)
         txt = (result.get("text") or "").strip()
         if txt:
-            with contextlib.suppress(Exception): os.remove(normalized_wav)
+            with contextlib.suppress(Exception):
+                os.remove(normalized_wav)
             return txt, "openai-whisper(tiny)", audio_seconds
     except Exception:
         pass
@@ -394,11 +447,14 @@ async def _transcribe_audio(file_path: str, lang_code: str | None) -> Tuple[str,
     try:
         import vosk  # type: ignore
         import json
+
         model_path = os.environ.get("VOSK_MODEL")
         if model_path and os.path.isdir(model_path):
             model = vosk.Model(model_path)
             rec = vosk.KaldiRecognizer(model, 16000)
-            with wave.open(src_for_stt if src_for_stt.endswith(".wav") else normalized_wav, "rb") as wf:
+            with wave.open(
+                src_for_stt if src_for_stt.endswith(".wav") else normalized_wav, "rb"
+            ) as wf:
                 while True:
                     data = wf.readframes(4000)
                     if not data:
@@ -407,25 +463,33 @@ async def _transcribe_audio(file_path: str, lang_code: str | None) -> Tuple[str,
                 out = json.loads(rec.FinalResult())
                 txt = (out.get("text") or "").strip()
                 if txt:
-                    with contextlib.suppress(Exception): os.remove(normalized_wav)
+                    with contextlib.suppress(Exception):
+                        os.remove(normalized_wav)
                     return txt, "vosk", audio_seconds
     except Exception:
         pass
 
     try:
         import speech_recognition as sr  # type: ignore
+
         r = sr.Recognizer()
-        with sr.AudioFile(src_for_stt if src_for_stt.endswith(".wav") else normalized_wav) as source:
+        with sr.AudioFile(
+            src_for_stt if src_for_stt.endswith(".wav") else normalized_wav
+        ) as source:
             audio = r.record(source)
-        txt = r.recognize_sphinx(audio, language="ru-RU" if (lang or "").startswith("ru") else "en-US")
+        txt = r.recognize_sphinx(
+            audio, language="ru-RU" if (lang or "").startswith("ru") else "en-US"
+        )
         txt = (txt or "").strip()
         if txt:
-            with contextlib.suppress(Exception): os.remove(normalized_wav)
+            with contextlib.suppress(Exception):
+                os.remove(normalized_wav)
             return txt, "pocketsphinx", audio_seconds
     except Exception:
         pass
 
-    with contextlib.suppress(Exception): os.remove(normalized_wav)
+    with contextlib.suppress(Exception):
+        os.remove(normalized_wav)
     return "", None, audio_seconds
 
 
@@ -435,20 +499,29 @@ async def cmd_menu(message: Message, session_maker: async_sessionmaker[AsyncSess
     lang = (get_lang(message.from_user.id) or "ru").lower()
     if lang not in ("ru", "en"):
         lang = "ru"
-    show_join, show_profile = await _flags_for_menu(session_maker, message.from_user.id, message.from_user.username)
-    media, kb = _render_user_menu(lang) if (show_profile and not show_join) else _render_guest_menu(lang)
+    show_join, show_profile = await _flags_for_menu(
+        session_maker, message.from_user.id, message.from_user.username
+    )
+    media, kb = (
+        _render_user_menu(lang) if (show_profile and not show_join) else _render_guest_menu(lang)
+    )
     await _answer_photo_or_text(message, media, kb)  # ← безопасная отправка
 
 
 @router.callback_query(StartCB.filter(F.action == "lang"))
-async def on_lang_selected(cb: CallbackQuery, callback_data: StartCB,
-                           session_maker: async_sessionmaker[AsyncSession]) -> None:
+async def on_lang_selected(
+    cb: CallbackQuery, callback_data: StartCB, session_maker: async_sessionmaker[AsyncSession]
+) -> None:
     lang = (callback_data.value or "ru").lower()
     set_lang(cb.from_user.id, "en" if lang == "en" else "ru")
 
     lang = (get_lang(cb.from_user.id) or "ru").lower()
-    show_join, show_profile = await _flags_for_menu(session_maker, cb.from_user.id, cb.from_user.username)
-    media, kb = _render_user_menu(lang) if (show_profile and not show_join) else _render_guest_menu(lang)
+    show_join, show_profile = await _flags_for_menu(
+        session_maker, cb.from_user.id, cb.from_user.username
+    )
+    media, kb = (
+        _render_user_menu(lang) if (show_profile and not show_join) else _render_guest_menu(lang)
+    )
     try:
         await cb.message.edit_media(media=media, reply_markup=kb)
     except Exception:
@@ -460,7 +533,9 @@ async def on_lang_selected(cb: CallbackQuery, callback_data: StartCB,
 
 
 @router.callback_query(StartCB.filter(F.action == "info"))
-async def on_info(cb: CallbackQuery, callback_data: StartCB, session_maker: async_sessionmaker[AsyncSession]) -> None:
+async def on_info(
+    cb: CallbackQuery, callback_data: StartCB, session_maker: async_sessionmaker[AsyncSession]
+) -> None:
     lang = (callback_data.value or get_lang(cb.from_user.id) or "ru").lower()
     caption = {
         "ru": (
@@ -481,7 +556,9 @@ async def on_info(cb: CallbackQuery, callback_data: StartCB, session_maker: asyn
         ),
     }[lang]
 
-    media = InputMediaPhoto(media=_resolve_photo_source(INFO_BANNER), caption=caption, parse_mode=ParseMode.HTML)
+    media = InputMediaPhoto(
+        media=_resolve_photo_source(INFO_BANNER), caption=caption, parse_mode=ParseMode.HTML
+    )
     try:
         await cb.message.edit_media(media=media, reply_markup=_back_kb(lang))
     except Exception:
@@ -550,12 +627,15 @@ async def on_a2t(cb: CallbackQuery, callback_data: StartCB, state: FSMContext) -
 @router.callback_query(StartCB.filter(F.action == "a2t_lang"))
 async def on_a2t_lang(cb: CallbackQuery, callback_data: StartCB, state: FSMContext) -> None:
     ui_lang = (get_lang(cb.from_user.id) or "ru").lower()
-    a2t_lang = (callback_data.value or "auto")
+    a2t_lang = callback_data.value or "auto"
     await state.update_data(a2t_lang=a2t_lang)
     await state.set_state(A2TStates.wait_audio)
     try:
-        await cb.message.edit_caption(caption=_T["a2t_send_audio"][ui_lang], parse_mode=ParseMode.HTML,
-                                      reply_markup=_back_kb(ui_lang))
+        await cb.message.edit_caption(
+            caption=_T["a2t_send_audio"][ui_lang],
+            parse_mode=ParseMode.HTML,
+            reply_markup=_back_kb(ui_lang),
+        )
     except Exception:
         await cb.message.answer(_T["a2t_send_audio"][ui_lang], parse_mode=ParseMode.HTML)
     with contextlib.suppress(TelegramBadRequest):
@@ -563,7 +643,9 @@ async def on_a2t_lang(cb: CallbackQuery, callback_data: StartCB, state: FSMConte
 
 
 @router.message(A2TStates.wait_audio, F.voice | F.audio)
-async def on_a2t_audio(message: Message, state: FSMContext, session_maker: async_sessionmaker[AsyncSession]) -> None:
+async def on_a2t_audio(
+    message: Message, state: FSMContext, session_maker: async_sessionmaker[AsyncSession]
+) -> None:
     ui_lang = (get_lang(message.from_user.id) or "ru").lower()
     data = await state.get_data()
     lang_code = data.get("a2t_lang") or "auto"
@@ -585,30 +667,44 @@ async def on_a2t_audio(message: Message, state: FSMContext, session_maker: async
 
         await status.edit_text("📦 <b>Сохраняю задачу в БД…</b>", parse_mode=ParseMode.HTML)
         async with session_maker() as s:
-            job_id = await _a2t_db_insert(s, user_id=message.from_user.id, lang=lang_code, file_path=tmp_path)
+            job_id = await _a2t_db_insert(
+                s, user_id=message.from_user.id, lang=lang_code, file_path=tmp_path
+            )
 
-        await status.edit_text(f"🔄 <b>Конвертирую в WAV 16k…</b>\n<code>job #{job_id}</code>", parse_mode=ParseMode.HTML)
+        await status.edit_text(
+            f"🔄 <b>Конвертирую в WAV 16k…</b>\n<code>job #{job_id}</code>",
+            parse_mode=ParseMode.HTML,
+        )
 
-        await status.edit_text(f"🧠 <b>Распознаю…</b>\n<code>job #{job_id}</code>", parse_mode=ParseMode.HTML)
+        await status.edit_text(
+            f"🧠 <b>Распознаю…</b>\n<code>job #{job_id}</code>", parse_mode=ParseMode.HTML
+        )
         text, backend, audio_sec = await _transcribe_audio(tmp_path, lang_code)
 
         if not text:
             await status.edit_text(
                 f"⚠️ <b>Не удалось распознать.</b>\n<code>job #{job_id}</code>",
-                parse_mode=ParseMode.HTML
+                parse_mode=ParseMode.HTML,
             )
             async with session_maker() as s:
                 await _a2t_db_update(
-                    s, job_id,
+                    s,
+                    job_id,
                     status="failed",
                     backend=backend,
                     finished_at=now_str(),
                     duration_ms=int((time.monotonic() - t0) * 1000),
                     audio_seconds=audio_sec,
                     text_len=0,
-                    error="empty_result"
+                    error="empty_result",
                 )
-            await message.answer(_T["a2t_done_title"][ui_lang] + {"ru": "Не удалось распознать аудио.", "en": "Failed to transcribe audio."}[ui_lang], parse_mode=ParseMode.HTML)
+            await message.answer(
+                _T["a2t_done_title"][ui_lang]
+                + {"ru": "Не удалось распознать аудио.", "en": "Failed to transcribe audio."}[
+                    ui_lang
+                ],
+                parse_mode=ParseMode.HTML,
+            )
         else:
             dt_ms = int((time.monotonic() - t0) * 1000)
             await status.edit_text(
@@ -616,18 +712,19 @@ async def on_a2t_audio(message: Message, state: FSMContext, session_maker: async
                 f"🧩 Бэкенд: <code>{backend}</code>\n"
                 f"⏱️ Время: <code>{dt_ms} ms</code>, Аудио: <code>{(audio_sec or 0):.1f} s</code>\n"
                 f"<code>job #{job_id}</code>",
-                parse_mode=ParseMode.HTML
+                parse_mode=ParseMode.HTML,
             )
             async with session_maker() as s:
                 await _a2t_db_update(
-                    s, job_id,
+                    s,
+                    job_id,
                     status="done",
                     backend=backend,
                     finished_at=now_str(),
                     duration_ms=dt_ms,
                     audio_seconds=audio_sec,
                     text_len=len(text),
-                    error=None
+                    error=None,
                 )
             await message.answer(_T["a2t_done_title"][ui_lang] + text, parse_mode=ParseMode.HTML)
 
@@ -636,28 +733,27 @@ async def on_a2t_audio(message: Message, state: FSMContext, session_maker: async
             os.remove(tmp_path)
 
     await state.clear()
-    show_join, show_profile = await _flags_for_menu(session_maker, message.from_user.id, message.from_user.username)
-    media, kb = _render_user_menu(ui_lang) if (show_profile and not show_join) else _render_guest_menu(ui_lang)
+    show_join, show_profile = await _flags_for_menu(
+        session_maker, message.from_user.id, message.from_user.username
+    )
+    media, kb = (
+        _render_user_menu(ui_lang)
+        if (show_profile and not show_join)
+        else _render_guest_menu(ui_lang)
+    )
     await _answer_photo_or_text(message, media, kb)  # ← безопасная отправка
 
 
-@router.callback_query(StartCB.filter(F.action.in_({"gpt", "settings"})))
+@router.callback_query(StartCB.filter(F.action.in_({"gpt"})))
 async def on_placeholders(cb: CallbackQuery, callback_data: StartCB) -> None:
     lang = (callback_data.value or get_lang(cb.from_user.id) or "ru").lower()
-    action = callback_data.action
 
-    banner = GPT_BANNER if action == "gpt" else SET_BANNER
+    banner = GPT_BANNER
 
-    if action == "gpt":
-        caption = {
-            "ru": "⚡ <b>Раздел «Chat GPT 5» в разработке</b>.\nСкоро тут будет магия 🤖✨",
-            "en": "⚡ <b>“Chat GPT 5” section is under construction</b>.\nMagic coming soon 🤖✨",
-        }[lang]
-    else:
-        caption = {
-            "ru": "⚙️ <b>Раздел в разработке</b>.",
-            "en": "⚙️ <b>Section is under construction</b>.",
-        }[lang]
+    caption = {
+        "ru": "⚡ <b>Раздел «Chat GPT 5» в разработке</b>.\nСкоро тут будет магия 🤖✨",
+        "en": "⚡ <b>“Chat GPT 5” section is under construction</b>.\nMagic coming soon 🤖✨",
+    }[lang]
 
     media = InputMediaPhoto(
         media=_resolve_photo_source(banner),
@@ -675,14 +771,21 @@ async def on_placeholders(cb: CallbackQuery, callback_data: StartCB) -> None:
         await cb.answer()
 
 
-
 @router.callback_query(StartCB.filter(F.action == "back"))
-async def on_back(cb: CallbackQuery, callback_data: StartCB, session_maker: async_sessionmaker[AsyncSession],
-                  state: FSMContext) -> None:
+async def on_back(
+    cb: CallbackQuery,
+    callback_data: StartCB,
+    session_maker: async_sessionmaker[AsyncSession],
+    state: FSMContext,
+) -> None:
     await state.clear()
     lang = (callback_data.value or get_lang(cb.from_user.id) or "ru").lower()
-    show_join, show_profile = await _flags_for_menu(session_maker, cb.from_user.id, cb.from_user.username)
-    media, kb = _render_user_menu(lang) if (show_profile and not show_join) else _render_guest_menu(lang)
+    show_join, show_profile = await _flags_for_menu(
+        session_maker, cb.from_user.id, cb.from_user.username
+    )
+    media, kb = (
+        _render_user_menu(lang) if (show_profile and not show_join) else _render_guest_menu(lang)
+    )
     try:
         await cb.message.edit_media(media=media, reply_markup=kb)
     except Exception:

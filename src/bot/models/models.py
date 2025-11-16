@@ -14,15 +14,7 @@ ORM-модели SQLAlchemy для бота.
 - Столбцы created_at/updated_at хранятся как TEXT (UTC, формат YYYY-MM-DD HH:MM:SS).
 """
 
-from sqlalchemy import (
-    BigInteger,
-    Integer,
-    String,
-    Text,
-    text,
-    UniqueConstraint,
-    Column,
-)
+from sqlalchemy import BigInteger, Integer, String, Text, text, UniqueConstraint, Column, DateTime
 from sqlalchemy.orm import declarative_base
 
 Base = declarative_base()
@@ -155,6 +147,7 @@ class Profile(Base):
         points     (int)      — очки/карма (по умолчанию 10).
         created_at (str)      — когда создан профиль.
         updated_at (str)      — когда последний раз обновляли.
+        eng_goup   (str)      — группа по анлглийскому (FL, EAP, AWA1)
     """
 
     __tablename__ = "profiles"
@@ -163,6 +156,7 @@ class Profile(Base):
     user_id = Column(BigInteger, index=True, unique=True, nullable=False)
     username = Column(String, nullable=True)
     points = Column(Integer, nullable=False, server_default=text("10"))
+    eng_group = Column(String, nullable=True)
 
     created_at = Column(String, nullable=False, server_default=text("(CURRENT_TIMESTAMP)"))
     updated_at = Column(String, nullable=False, server_default=text("(CURRENT_TIMESTAMP)"))
@@ -175,16 +169,21 @@ class Deadline(Base):
 
     Атрибуты:
         id          (int)      — PK.
+        task_id     (int)      — id задание в Мудле
         start_at    (str)      — когда открывается задание.
         end_at      (str)      — когда зыкрывается задание.
         course_name (str)      — название курса (например: [F25] Foreign Language (Tue/Thu)).
         task_name   (str)      — название задания (например: Listening 1.WB p.25, ex 5 b).
     """
 
-    __tablename__ = "invites"
+    __tablename__ = "deadlines"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    task_id = Column(String, nullable=False, unique=True)  # Уникальный ID из API
     start_at = Column(DateTime, nullable=False)
     end_at = Column(DateTime, nullable=False)
     course_name = Column(String(255), nullable=False)  # e.g. "Academic English B2"
     task_name = Column(Text, nullable=False)
+
+    def __repr__(self):
+        return f"<Deadline(course='{self.course_name}', task_name='{self.task_name}. From '{self.start_at} to '{self.end_at}')>"

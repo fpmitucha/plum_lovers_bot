@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 """
 Диалог «вступления в PLS» с авто-завершением заявки, если пользователь уже в чате.
 
@@ -71,31 +72,35 @@ _MENU_T = {
             "What shall we choose today? 👇"
         ),
     },
-    "btn_profile":  {"ru": "👤 Личный кабинет", "en": "👤 Profile"},
-    "btn_rules":    {"ru": "🧭 Правила",       "en": "🧭 Rules"},
-    "btn_a2t":      {"ru": "🔊 Аудио в текст", "en": "🔊 Audio to text"},
-    "btn_gpt":      {"ru": "⚡ Chat GPT 5",    "en": "⚡ Chat GPT 5"},
-    "btn_help":     {"ru": "❓ Помощь",        "en": "❓ Help"},
-    "btn_settings": {"ru": "⚙️ Настройки",     "en": "⚙️ Settings"},
+    "btn_profile": {"ru": "👤 Личный кабинет", "en": "👤 Profile"},
+    "btn_rules": {"ru": "🧭 Правила", "en": "🧭 Rules"},
+    "btn_a2t": {"ru": "🔊 Аудио в текст", "en": "🔊 Audio to text"},
+    "btn_gpt": {"ru": "⚡ Chat GPT 5", "en": "⚡ Chat GPT 5"},
+    "btn_help": {"ru": "❓ Помощь", "en": "❓ Help"},
+    "btn_settings": {"ru": "⚙️ Настройки", "en": "⚙️ Settings"},
 }
+
 
 def _user_menu_kb_join(lang: str) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
-    kb.button(text=_MENU_T["btn_profile"][lang],  callback_data=CabCB(action="open").pack())
-    kb.button(text=_MENU_T["btn_rules"][lang],    callback_data=f"start:rules:{lang}")
-    kb.button(text=_MENU_T["btn_a2t"][lang],      callback_data=f"start:a2t:{lang}")
-    kb.button(text=_MENU_T["btn_gpt"][lang],      callback_data=f"start:gpt:{lang}")
-    kb.button(text=_MENU_T["btn_help"][lang],     callback_data=f"start:help:{lang}")
-    kb.button(text=_MENU_T["btn_settings"][lang], callback_data=f"start:settings:{lang}")
+    kb.button(text=_MENU_T["btn_profile"][lang], callback_data=CabCB(action="open").pack())
+    kb.button(text=_MENU_T["btn_rules"][lang], callback_data=f"start:rules:{lang}")
+    kb.button(text=_MENU_T["btn_a2t"][lang], callback_data=f"start:a2t:{lang}")
+    kb.button(text=_MENU_T["btn_gpt"][lang], callback_data=f"start:gpt:{lang}")
+    kb.button(text=_MENU_T["btn_help"][lang], callback_data=f"start:help:{lang}")
+    kb.button(text=_MENU_T["btn_settings"][lang], callback_data=f"settings:open:{lang}")
     kb.adjust(2, 2, 2)
     return kb.as_markup()
+
 
 # ---- FSM ----
 class JoinStates(StatesGroup):
     waiting_slug = State()
 
+
 class AdminStates(StatesGroup):
     waiting_deny_reason = State()
+
 
 # ---- УТИЛИТЫ ----
 def _resolve_photo_source(src: str) -> Union[str, FSInputFile]:
@@ -108,6 +113,7 @@ def _resolve_photo_source(src: str) -> Union[str, FSInputFile]:
         return s
     p = Path(s).expanduser()
     return FSInputFile(p) if p.exists() and p.is_file() else s
+
 
 async def _is_already_in_target_chat(bot, user_id: int) -> bool:
     """True, если пользователь уже состоит в целевом чате."""
@@ -123,6 +129,7 @@ async def _is_already_in_target_chat(bot, user_id: int) -> bool:
     except Exception:
         return False
 
+
 async def _revoke_active_invite(bot, repo: Repo, user_id: int) -> None:
     """Отозвать активную персональную ссылку пользователя (если есть) и удалить запись из БД."""
     try:
@@ -136,6 +143,7 @@ async def _revoke_active_invite(bot, repo: Repo, user_id: int) -> None:
     except Exception:
         pass
     await repo.delete_invite(inv.id)
+
 
 async def _close_admin_request_message(cb: CallbackQuery, notice: str | None = None) -> None:
     """
@@ -162,11 +170,11 @@ async def _close_admin_request_message(cb: CallbackQuery, notice: str | None = N
 
 
 async def _update_application_messages_for_all_admins(
-    bot, 
-    app, 
+    bot,
+    app,
     session_maker: async_sessionmaker[AsyncSession],
     result: str,
-    admin_username: str | None = None
+    admin_username: str | None = None,
 ) -> None:
     """
     Обновить сообщения о заявке у всех админов с результатом обработки.
@@ -174,7 +182,7 @@ async def _update_application_messages_for_all_admins(
     async with session_maker() as admin_session:
         admin_repo = Repo(admin_session)
         admin_ids = await _get_all_admin_ids(admin_repo)
-    
+
     targets: list[int] = list(admin_ids)
     admin_notify_chat_id = getattr(settings, "ADMIN_NOTIFY_CHAT_ID", None)
     if admin_notify_chat_id:
@@ -201,7 +209,10 @@ async def _update_application_messages_for_all_admins(
                 parse_mode=ParseMode.HTML,
             )
         except Exception as e:
-            logging.getLogger("innopls-bot").warning("Не удалось обновить сообщение для админа %s: %s", admin_id, e)
+            logging.getLogger("innopls-bot").warning(
+                "Не удалось обновить сообщение для админа %s: %s", admin_id, e
+            )
+
 
 # ---- HANDLERS: USER FLOW ----
 @router.callback_query(JoinCB.filter(F.action == "start"))
@@ -227,6 +238,7 @@ async def on_join_click(cb: CallbackQuery, state: FSMContext) -> None:
         parse_mode=ParseMode.HTML,
     )
     await cb.answer()
+
 
 @router.message(JoinStates.waiting_slug)
 async def on_slug_received(
@@ -330,7 +342,11 @@ async def on_slug_received(
             await _revoke_active_invite(message.bot, repo, message.from_user.id)
 
             # Отправляем уведомление всем админам о новой заявке
-            mention = f"@{message.from_user.username}" if message.from_user.username else f"id:{message.from_user.id}"
+            mention = (
+                f"@{message.from_user.username}"
+                if message.from_user.username
+                else f"id:{message.from_user.id}"
+            )
             text = (
                 "📝 Новая заявка на вступление\n\n"
                 f"<b>Slug:</b> <code>{html.escape(normalized)}</code>\n"
@@ -343,7 +359,7 @@ async def on_slug_received(
             async with session_maker() as admin_session:
                 admin_repo = Repo(admin_session)
                 admin_ids = await _get_all_admin_ids(admin_repo)
-            
+
             targets: list[int] = list(admin_ids)
             admin_notify_chat_id = getattr(settings, "ADMIN_NOTIFY_CHAT_ID", None)
             if admin_notify_chat_id:
@@ -362,11 +378,7 @@ async def on_slug_received(
 
             # Обновляем сообщения у всех админов с результатом
             await _update_application_messages_for_all_admins(
-                message.bot, 
-                app, 
-                session_maker,
-                "AUTO-APPROVED (уже в чате)",
-                None
+                message.bot, app, session_maker, "AUTO-APPROVED (уже в чате)", None
             )
 
             await state.clear()
@@ -396,7 +408,9 @@ async def on_slug_received(
 
         if await repo.has_active_application(message.from_user.id):
             await state.clear()
-            await message.answer("У вас уже есть активная заявка. Дождитесь решения администратора.")
+            await message.answer(
+                "У вас уже есть активная заявка. Дождитесь решения администратора."
+            )
             return
 
         # Создаём новую заявку (pending) и уведомляем админов
@@ -406,7 +420,11 @@ async def on_slug_received(
             slug=normalized,
         )
 
-        mention = f"@{message.from_user.username}" if message.from_user.username else f"id:{message.from_user.id}"
+        mention = (
+            f"@{message.from_user.username}"
+            if message.from_user.username
+            else f"id:{message.from_user.id}"
+        )
         text = (
             "📝 Новая заявка на вступление\n\n"
             f"<b>Slug:</b> <code>{html.escape(normalized)}</code>\n"
@@ -419,7 +437,7 @@ async def on_slug_received(
         async with session_maker() as admin_session:
             admin_repo = Repo(admin_session)
             admin_ids = await _get_all_admin_ids(admin_repo)
-        
+
         targets: list[int] = list(admin_ids)
         admin_notify_chat_id = getattr(settings, "ADMIN_NOTIFY_CHAT_ID", None)
         if admin_notify_chat_id:
@@ -443,6 +461,7 @@ async def on_slug_received(
             "en": "Your application has been sent to the administrator for review ✅",
         }[lang]
         await message.answer(ok_text)
+
 
 # ---- HANDLERS: ADMIN APPROVE/DENY ----
 @router.callback_query(AdminCB.filter(F.action == "approve"))
@@ -487,11 +506,7 @@ async def on_admin_approved(
 
             # Обновляем сообщения у всех админов с результатом
             await _update_application_messages_for_all_admins(
-                cb.bot, 
-                app, 
-                session_maker,
-                "AUTO-APPROVED (уже в чате)",
-                cb.from_user.username
+                cb.bot, app, session_maker, "AUTO-APPROVED (уже в чате)", cb.from_user.username
             )
 
             # уведомим пользователя
@@ -528,12 +543,14 @@ async def on_admin_approved(
     }[lang]
 
     kb = InlineKeyboardMarkup(
-        inline_keyboard=[[
-            InlineKeyboardButton(
-                text={"ru": "Принимаю правила", "en": "I accept the rules"}[lang],
-                callback_data=JoinCB(action="accept_rules", app_id=str(app_id)).pack(),
-            )
-        ]]
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text={"ru": "Принимаю правила", "en": "I accept the rules"}[lang],
+                    callback_data=JoinCB(action="accept_rules", app_id=str(app_id)).pack(),
+                )
+            ]
+        ]
     )
 
     with contextlib.suppress(Exception):
@@ -547,15 +564,12 @@ async def on_admin_approved(
 
     # Обновляем сообщения у всех админов с результатом
     await _update_application_messages_for_all_admins(
-        cb.bot, 
-        app, 
-        session_maker,
-        "APPROVED",
-        cb.from_user.username
+        cb.bot, app, session_maker, "APPROVED", cb.from_user.username
     )
-    
+
     # скрываем карточку у нажавшего админа
     await _close_admin_request_message(cb)
+
 
 @router.callback_query(AdminCB.filter(F.action == "deny"))
 async def on_admin_deny_click(
@@ -591,6 +605,7 @@ async def on_admin_deny_click(
         parse_mode=ParseMode.HTML,
     )
 
+
 @router.message(AdminStates.waiting_deny_reason)
 async def on_admin_deny_reason(
     message: Message,
@@ -614,11 +629,7 @@ async def on_admin_deny_reason(
 
         # Обновляем сообщения у всех админов с результатом
         await _update_application_messages_for_all_admins(
-            message.bot, 
-            app, 
-            session_maker,
-            "DENIED",
-            message.from_user.username
+            message.bot, app, session_maker, "DENIED", message.from_user.username
         )
 
         lang = get_lang(app.user_id) or "ru"
@@ -637,6 +648,7 @@ async def on_admin_deny_reason(
 
     await state.clear()
     await message.answer("Отправлено пользователю ✅")
+
 
 # ---- HANDLERS: USER ACCEPT RULES ----
 @router.callback_query(JoinCB.filter(F.action == "accept_rules"))
@@ -657,17 +669,23 @@ async def on_rules_accepted(
         me = await cb.bot.get_me()
         cm = await cb.bot.get_chat_member(settings.TARGET_CHAT_ID, me.id)
     except TelegramBadRequest:
-        await cb.message.answer("❌ Не вижу целевой чат. Проверьте TARGET_CHAT_ID и что бот добавлен в чат.")
+        await cb.message.answer(
+            "❌ Не вижу целевой чат. Проверьте TARGET_CHAT_ID и что бот добавлен в чат."
+        )
         await cb.answer()
         return
 
     if cm.status != "administrator":
-        await cb.message.answer("❌ Бот не администратор в целевом чате. Выдайте право «Приглашать по ссылке».")
+        await cb.message.answer(
+            "❌ Бот не администратор в целевом чате. Выдайте право «Приглашать по ссылке»."
+        )
         await cb.answer()
         return
     if isinstance(cm, ChatMemberAdministrator):
         if hasattr(cm, "can_invite_users") and not cm.can_invite_users:
-            await cb.message.answer("❌ У бота нет права «Приглашать по ссылке». Включите и повторите.")
+            await cb.message.answer(
+                "❌ У бота нет права «Приглашать по ссылке». Включите и повторите."
+            )
             await cb.answer()
             return
 
@@ -693,11 +711,7 @@ async def on_rules_accepted(
 
             # Обновляем сообщения у всех админов с результатом
             await _update_application_messages_for_all_admins(
-                cb.bot, 
-                app, 
-                session_maker,
-                "AUTO-APPROVED (уже в чате)",
-                cb.from_user.username
+                cb.bot, app, session_maker, "AUTO-APPROVED (уже в чате)", cb.from_user.username
             )
 
             lang = get_lang(app.user_id) or "ru"
@@ -711,7 +725,9 @@ async def on_rules_accepted(
 
         # обычная логика: задаём персональную ссылку
         if await repo.has_active_invite(cb.from_user.id):
-            await cb.message.answer("У вас уже есть активная персональная ссылка. Проверьте предыдущие сообщения.")
+            await cb.message.answer(
+                "У вас уже есть активная персональная ссылка. Проверьте предыдущие сообщения."
+            )
             await cb.answer()
             return
 
@@ -764,6 +780,7 @@ async def on_rules_accepted(
 
     await cb.answer()
 
+
 # ---- СЛУШАЕМ ФАКТИЧЕСКОЕ ВСТУПЛЕНИЕ В ЧАТ ----
 @router.chat_member()
 async def on_member_joined_target_chat(
@@ -780,7 +797,11 @@ async def on_member_joined_target_chat(
         return
 
     new_status = ev.new_chat_member.status
-    if new_status not in {ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR}:
+    if new_status not in {
+        ChatMemberStatus.MEMBER,
+        ChatMemberStatus.ADMINISTRATOR,
+        ChatMemberStatus.CREATOR,
+    }:
         return  # не событие «вступил»
 
     # гарантируем профиль и подтягиваем slug из последней заявки (если была)

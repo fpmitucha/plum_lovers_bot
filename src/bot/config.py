@@ -27,6 +27,10 @@ class Settings(BaseSettings):
 
     TELEGRAM_BOT_TOKEN: str = Field(..., min_length=10)
     ADMIN_USER_IDS: List[int] = Field(default_factory=list)
+    DONOR_MAILS: List[str] = Field(default_factory=list)
+    DONOR_PASSWORDS: List[str] = Field(default_factory=list)
+    IMAP_SERVER: str
+
     TARGET_CHAT_ID: int
     START_PHOTO_URL: str
     START_CAPTION: str = "Добро пожаловать!"
@@ -35,4 +39,7 @@ class Settings(BaseSettings):
     RULES_URL: str
 
 
-settings = Settings()
+try:
+    settings = Settings()
+except Exception as e:
+    print(e)

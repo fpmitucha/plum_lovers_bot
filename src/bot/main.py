@@ -25,11 +25,14 @@ from bot.handlers import admin as admin_handlers
 from bot.handlers import chat_member as chat_member_handlers
 from bot.handlers import cleanup as cleanup_handlers
 from bot.handlers import cabinet as cabinet_handlers
+from bot.handlers import settings as settings_handlers
 from bot.handlers import admin_karma
+from bot.handlers import deadlines as deadlines_handlers
 from bot.handlers.top import router as top_router
 from bot.handlers.karma_auto import router as karma_auto_router
 
 from bot.utils.db import create_engine, create_session_factory
+from bot.utils.parse_deadlines import parse_deadlines
 from bot.models.models import Base
 
 
@@ -42,6 +45,7 @@ async def set_bot_commands(bot: Bot) -> None:
             BotCommand(command="top", description="Топ пользователей по карме"),
             BotCommand(command="help", description="Помощь и информация"),
             BotCommand(command="whoami", description="Показать мой Telegram ID"),
+            BotCommand(command="deadlines", description="Показать текущие дедлайны"),
             # BotCommand(command="admin", description="Админ-панель"),
         ]
     )
@@ -59,6 +63,7 @@ async def seed_roster_if_needed(session_maker) -> None:
         return
 
     from bot.utils.repo import Repo
+
     async with session_maker() as session:
         repo = Repo(session)
         with f.open("r", encoding="utf-8") as fh:
@@ -78,6 +83,7 @@ async def on_startup(dp: Dispatcher, bot: Bot, engine):
 
     await set_bot_commands(bot)
     await seed_roster_if_needed(session_maker)
+    asyncio.create_task(parse_deadlines(session_maker))
 
 
 async def main():
@@ -98,8 +104,10 @@ async def main():
     dp.include_router(admin_handlers.router)
     dp.include_router(admin_karma.router)
     dp.include_router(cabinet_handlers.router)
+    dp.include_router(settings_handlers.router)
+    dp.include_router(deadlines_handlers.router)
 
-    dp.include_router(karma_auto_router)             # ← после всех команд (есть @router.message())
+    dp.include_router(karma_auto_router)  # ← после всех команд (есть @router.message())
 
     dp.include_router(chat_member_handlers.router)
     dp.include_router(cleanup_handlers.router)

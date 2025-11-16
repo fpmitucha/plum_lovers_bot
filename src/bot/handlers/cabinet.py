@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 """
 Личный кабинет:
 - Карточка с локализацией (TOP/KARMA).
@@ -30,7 +31,6 @@ CABINET_CARD_TEMPLATE = "./data/profile_card_base.png"
 _T = {
     "btn_profile": {"ru": "👤 Личный кабинет", "en": "👤 Profile"},
     "btn_back": {"ru": "⬅️ Назад", "en": "⬅️ Back"},
-
     # подписи к меню (те же, что и в start.py)
     "menu_guest": {
         "ru": "<b>Привет!</b>\nТы в официальном боте <b>Клуба Любителей Сливов</b>. Здесь добро превращается в знания — делимся конспектами, разборами и поддержкой.\n\nЧто выбираем сегодня? 👇\n<i>Подсказка: если ты впервые здесь — начни с 🧭 Правила.\nМы не пираты — мы архивисты энтузиазма.</i>",
@@ -40,47 +40,59 @@ _T = {
         "ru": "<b>Привет!</b>\nТы в официальном боте <b>Клуба Любителей Сливов</b>. Здесь добро превращается в знания — делимся конспектами, разборами и поддержкой.\n\nЧто выбираем сегодня? 👇",
         "en": "<b>Hi!</b>\nYou’re in the official bot of the <b>Plum Lovers Club</b>. Kindness turns into knowledge here — we share notes, breakdowns, and support.\n\nWhat shall we choose today? 👇",
     },
-    "btn_rules":   {"ru": "🧭 Правила",       "en": "🧭 Rules"},
-    "btn_help":    {"ru": "❓ Помощь",        "en": "❓ Help"},
-    "btn_join":    {"ru": "👉 Вступить в КЛС","en": "👉 Join the club"},
-    "btn_info":    {"ru": "📗 КЛС инфо",      "en": "📗 Club info"},
-    "btn_profile": {"ru": "👤 Личный кабинет","en": "👤 Profile"},
-    "btn_a2t":     {"ru": "🔊 Аудио в текст", "en": "🔊 Audio to text"},
-    "btn_gpt":     {"ru": "⚡ Chat GPT 5",    "en": "⚡ Chat GPT 5"},
-    "btn_settings":{"ru": "⚙️ Настройки",     "en": "⚙️ Settings"},
+    "btn_rules": {"ru": "🧭 Правила", "en": "🧭 Rules"},
+    "btn_help": {"ru": "❓ Помощь", "en": "❓ Help"},
+    "btn_join": {"ru": "👉 Вступить в КЛС", "en": "👉 Join the club"},
+    "btn_info": {"ru": "📗 КЛС инфо", "en": "📗 Club info"},
+    "btn_profile": {"ru": "👤 Личный кабинет", "en": "👤 Profile"},
+    "btn_a2t": {"ru": "🔊 Аудио в текст", "en": "🔊 Audio to text"},
+    "btn_gpt": {"ru": "⚡ Chat GPT 5", "en": "⚡ Chat GPT 5"},
+    "btn_settings": {"ru": "⚙️ Настройки", "en": "⚙️ Settings"},
 }
+
 
 def _back_menu(lang: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
-        inline_keyboard=[[InlineKeyboardButton(text=_T["btn_back"][lang], callback_data=CabCB(action="back").pack())]]
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=_T["btn_back"][lang], callback_data=CabCB(action="back").pack()
+                )
+            ]
+        ]
     )
+
 
 def _guest_menu_kb(lang: str) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
-    kb.button(text=_T["btn_rules"][lang],   callback_data="start:rules:" + lang)
-    kb.button(text=_T["btn_help"][lang],    callback_data="start:help:" + lang)
-    kb.button(text=_T["btn_join"][lang],    callback_data=JoinCB(action="start").pack())
-    kb.button(text=_T["btn_info"][lang],    callback_data="start:info:" + lang)
+    kb.button(text=_T["btn_rules"][lang], callback_data="start:rules:" + lang)
+    kb.button(text=_T["btn_help"][lang], callback_data="start:help:" + lang)
+    kb.button(text=_T["btn_join"][lang], callback_data=JoinCB(action="start").pack())
+    kb.button(text=_T["btn_info"][lang], callback_data="start:info:" + lang)
     kb.adjust(2, 2)
     return kb.as_markup()
+
 
 def _user_menu_kb(lang: str) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     kb.button(text=_T["btn_profile"][lang], callback_data=CabCB(action="open").pack())
-    kb.button(text=_T["btn_rules"][lang],   callback_data="start:rules:" + lang)
-    kb.button(text=_T["btn_a2t"][lang],     callback_data="start:a2t:"   + lang)
-    kb.button(text=_T["btn_gpt"][lang],     callback_data="start:gpt:"   + lang)
-    kb.button(text=_T["btn_help"][lang],    callback_data="start:help:"  + lang)
-    kb.button(text=_T["btn_settings"][lang],callback_data="start:settings:" + lang)
+    kb.button(text=_T["btn_rules"][lang], callback_data="start:rules:" + lang)
+    kb.button(text=_T["btn_a2t"][lang], callback_data="start:a2t:" + lang)
+    kb.button(text=_T["btn_gpt"][lang], callback_data="start:gpt:" + lang)
+    kb.button(text=_T["btn_help"][lang], callback_data="start:help:" + lang)
+    kb.button(text=_T["btn_settings"][lang], callback_data="start:settings:" + lang)
     kb.adjust(2, 2, 2)
     return kb.as_markup()
+
 
 async def _is_registered_and_ensure_profile(repo: Repo, user_id: int, username: str | None) -> bool:
     if await repo.profile_exists(user_id):
         return True
     app = await repo.get_last_application_for_user(user_id)
     if app and (app.status or "").lower() == "done":
-        await repo.ensure_profile(user_id=user_id, username=username, slug=getattr(app, "slug", None))
+        await repo.ensure_profile(
+            user_id=user_id, username=username, slug=getattr(app, "slug", None)
+        )
         return True
     return False
 
@@ -118,11 +130,17 @@ async def cb_open(c: CallbackQuery, session_maker: async_sessionmaker[AsyncSessi
     )
 
     try:
-        media = InputMediaPhoto(media=FSInputFile(tmp_path), caption=caption, parse_mode=ParseMode.HTML)
+        media = InputMediaPhoto(
+            media=FSInputFile(tmp_path), caption=caption, parse_mode=ParseMode.HTML
+        )
         await c.message.edit_media(media=media, reply_markup=_back_menu(lang))
     except Exception:
-        await c.message.answer_photo(photo=FSInputFile(tmp_path), caption=caption,
-                                     parse_mode=ParseMode.HTML, reply_markup=_back_menu(lang))
+        await c.message.answer_photo(
+            photo=FSInputFile(tmp_path),
+            caption=caption,
+            parse_mode=ParseMode.HTML,
+            reply_markup=_back_menu(lang),
+        )
     finally:
         with contextlib.suppress(Exception):
             os.remove(tmp_path)
@@ -139,12 +157,18 @@ async def cb_back(c: CallbackQuery, session_maker: async_sessionmaker[AsyncSessi
 
     caption = _T["menu_user"][lang] if is_reg else _T["menu_guest"][lang]
     kb = _user_menu_kb(lang) if is_reg else _guest_menu_kb(lang)
-    media = InputMediaPhoto(media=FSInputFile(AFTER_LANG_BANNER), caption=caption, parse_mode=ParseMode.HTML)
+    media = InputMediaPhoto(
+        media=FSInputFile(AFTER_LANG_BANNER), caption=caption, parse_mode=ParseMode.HTML
+    )
     try:
         await c.message.edit_media(media=media, reply_markup=kb)
     except Exception:
-        await c.message.answer_photo(photo=FSInputFile(AFTER_LANG_BANNER), caption=caption,
-                                     parse_mode=ParseMode.HTML, reply_markup=kb)
+        await c.message.answer_photo(
+            photo=FSInputFile(AFTER_LANG_BANNER),
+            caption=caption,
+            parse_mode=ParseMode.HTML,
+            reply_markup=kb,
+        )
         with contextlib.suppress(Exception):
             await c.message.delete()
     with contextlib.suppress(TelegramBadRequest):
