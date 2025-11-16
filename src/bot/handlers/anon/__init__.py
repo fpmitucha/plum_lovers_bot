@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from aiogram import Router
 
-from . import admin_box, dialogs, menu, public
+from . import admin_box, dialogs, menu, public, settings, consent
 
 router = Router(name="anon")
 router.include_router(menu.router)
 router.include_router(dialogs.router)
 router.include_router(admin_box.router)
 router.include_router(public.router)
+router.include_router(settings.router)
+router.include_router(consent.router)

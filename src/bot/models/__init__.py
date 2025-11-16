@@ -14,6 +14,8 @@ from .models import (
     AnonDialog,
     AnonMessage,
     AnonPublicRequest,
+    AnonPreference,
+    AnonConsentRequest,
     FireIncident,
     FireCounter,
 )
@@ -29,6 +31,8 @@ __all__ = [
     "AnonDialog",
     "AnonMessage",
     "AnonPublicRequest",
+    "AnonPreference",
+    "AnonConsentRequest",
     "FireIncident",
     "FireCounter",
 ]

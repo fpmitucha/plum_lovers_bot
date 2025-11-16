@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from aiogram import Router, F
 from aiogram.filters import Command
+from aiogram.filters.command import CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from bot.utils.repo import Repo
 
@@ -17,9 +18,15 @@ from .common import (
     ensure_rate,
     lang,
     main_admin_id,
+    new_dialog,
     notify_dialog_closed,
+    receiver_blocked_text,
+    resolve_target,
+    self_blocked_text,
+    snapshot,
     tr,
 )
+from .dialogs import _deliver_user_message
 from .states import AnonStates
 
 router = Router(name="anon-menu")
@@ -50,13 +57,23 @@ def _menu_keyboard(lang_code: str, has_dialog: bool) -> InlineKeyboardBuilder:
         kb.button(text=tr(lang_code, "🚪 Завершить диалог", "🚪 Close dialog"), callback_data=MenuCB(action="dialog_close").pack())
     kb.button(text=tr(lang_code, "🛎 Сообщение админам", "🛎 Message admins"), callback_data=MenuCB(action="admins").pack())
     kb.button(text=tr(lang_code, "📣 В общий чат", "📣 Public chat"), callback_data=MenuCB(action="public").pack())
+    kb.button(text=tr(lang_code, "⚙️ Настройки", "⚙️ Settings"), callback_data=MenuCB(action="settings").pack())
     kb.adjust(1)
     return kb
 
 
 @router.message(Command("anon"))
-async def cmd_anon(message: Message, state: FSMContext, session_maker: async_sessionmaker[AsyncSession]) -> None:
+async def cmd_anon(
+    message: Message,
+    state: FSMContext,
+    session_maker: async_sessionmaker[AsyncSession],
+    command: CommandObject | None = None,
+) -> None:
     await state.clear()
+    if command and (command.args or "").strip():
+        handled = await _handle_direct_command(message, state, session_maker, command.args.strip())
+        if handled:
+            return
     lang_code = lang(message.from_user.id)
     async with session_maker() as session:
         repo = Repo(session)
@@ -126,3 +143,69 @@ async def cb_public(callback: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(AnonStates.public_message)
     await callback.message.answer(tr(lang_code, "Напиши текст для публикации. Админы одобрят или отклонят.", "Send the text you want to publish. Admins will approve or reject it."))
     await callback.answer()
+
+
+async def _handle_direct_command(
+    message: Message,
+    state: FSMContext,
+    session_maker: async_sessionmaker[AsyncSession],
+    raw_args: str,
+) -> bool:
+    lang_code = lang(message.from_user.id)
+    args = (raw_args or "").strip()
+    if not args:
+        return False
+    parts = args.split(maxsplit=1)
+    target_raw = parts[0]
+    body = parts[1].strip() if len(parts) > 1 else ""
+    if not body:
+        await message.answer(tr(lang_code, "Добавь текст сообщения после ID или username.", "Add the message text after the ID or username."))
+        return True
+    async with session_maker() as session:
+        repo = Repo(session)
+        try:
+            target_id = await resolve_target(repo, target_raw)
+        except ValueError:
+            await message.answer(tr(lang_code, "Не удалось определить пользователя.", "Could not resolve the user."))
+            return True
+        if not target_id:
+            await message.answer(tr(lang_code, "Укажи корректный ID или @username.", "Provide a valid ID or @username."))
+            return True
+        try:
+            await ensure_rate(message.from_user.id, lang_code)
+        except ValueError as err:
+            await message.answer(str(err))
+            return True
+        existing = await active_dialog(repo, message.from_user.id, kind="user")
+        if existing:
+            await message.answer(tr(lang_code, "Сначала завершите текущий диалог.", "Please close the active dialog first."))
+            return True
+        sender_pref = await repo.get_anon_pref_mode(message.from_user.id)
+        if sender_pref == "reject":
+            await message.answer(self_blocked_text(lang_code))
+            return True
+        target_pref = await repo.get_anon_pref_mode(target_id)
+        if target_pref == "reject":
+            await message.answer(receiver_blocked_text(lang_code))
+            return True
+        target_consent = "pending" if target_pref == "confirm" else "approved"
+        code = await new_dialog(
+            repo,
+            initiator_id=message.from_user.id,
+            target_id=target_id,
+            kind="user",
+            target_consent=target_consent,
+        )
+        dialog_row = await repo.get_anon_dialog_by_code(code)
+        dialog = snapshot(dialog_row)
+        await state.set_state(AnonStates.dialog_message)
+        await state.update_data(dialog_code=dialog.dialog_code, kind="user")
+        await _deliver_user_message(
+            message=message,
+            dialog=dialog,
+            repo=repo,
+            recipient_id=dialog.target_id,
+            text=body,
+            session_maker=session_maker,
+        )
+    return True
