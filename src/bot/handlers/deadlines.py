@@ -35,7 +35,11 @@ programs_courses = {
     "DSAI": en_programs,
 }
 
-eng_lang_courses = {"FL": "[F25] Foreign Language (Tue/Thu)", "EAP": "", "AWA1": ""}
+eng_lang_courses = {
+    "FL": "[F25] Foreign Language (Tue/Thu)",
+    "EAP": "",
+    "AWA1": "[F25] Academic Writing and Argumentation on Mon/Wed",
+}
 WEEKDAY_MAP = {
     "Monday": "Понедельник",
     "Tuesday": "Вторник",
