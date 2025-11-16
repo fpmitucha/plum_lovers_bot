@@ -20,7 +20,8 @@ import shutil
 import tempfile
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple, Iterable
+import html
 
 from aiogram import Router, F
 from aiogram.enums import ParseMode
@@ -37,6 +38,7 @@ from sqlalchemy import text
 
 from bot.config import settings
 from bot.utils.repo import Repo
+from math import ceil
 from bot.utils.admins import main_admin_id_from_settings
 from bot.utils.parsing import parse_slug, normalize_slug
 
@@ -52,6 +54,8 @@ def _is_main_admin(user_id: int) -> bool:
     return bool(admin_id and user_id == admin_id)
 # Размер страницы
 PAGE_SIZE = 20
+ANON_DIALOGS_PER_PAGE = 5
+ANON_MESSAGES_PER_PAGE = 8
 
 # Фильтр «не команда» — игнорируем всё, что начинается с «/»
 NO_COMMAND = (~F.text.regexp(r"^\s*/")) & (~F.caption.regexp(r"^\s*/"))
@@ -118,6 +122,7 @@ def _menu_kb(can_manage_admins: bool) -> InlineKeyboardBuilder:
     kb.button(text="🔎 Поиск/правка", callback_data=AdmCB(action="search").pack())
     kb.button(text="➕ Добавить в реестр", callback_data=AdmCB(action="roster_add").pack())
     kb.button(text="🚫 Чёрный список", callback_data=AdmCB(action="bl_page", value="0").pack())
+    kb.button(text="🕵️ Анонимные чаты", callback_data=AdmCB(action="anon_chats").pack())
     if can_manage_admins:
         kb.button(text="👥 Администраторы", callback_data=AdmCB(action="admins").pack())
     kb.adjust(1)
@@ -150,6 +155,179 @@ def _bl_nav_kb_builder(page: int, has_prev: bool, has_next: bool) -> InlineKeybo
     row.append(InlineKeyboardButton(text="🏠 Меню", callback_data=AdmCB(action="menu").pack()))
     kb.row(*row)
     return kb
+
+
+def _anon_list_nav(page: int, total_pages: int) -> InlineKeyboardBuilder:
+    kb = InlineKeyboardBuilder()
+    start = max(0, page - 2)
+    end = min(total_pages, start + 5)
+    start = max(0, end - 5)
+    for p in range(start, end):
+        text = f"[{p + 1}]" if p == page else str(p + 1)
+        kb.button(text=text, callback_data=AdmCB(action="anon_page", value=str(p)).pack())
+    kb.button(text="🏠", callback_data=AdmCB(action="menu").pack())
+    kb.adjust(5, 1)
+    return kb
+
+
+def _anon_dialog_nav(dialog_id: int, page: int, total_pages: int) -> InlineKeyboardBuilder:
+    kb = InlineKeyboardBuilder()
+    if page > 0:
+        kb.button(text="⬅️", callback_data=AdmCB(action="anon_dialog", value=f"{dialog_id},{page - 1}").pack())
+    if page < total_pages - 1:
+        kb.button(text="➡️", callback_data=AdmCB(action="anon_dialog", value=f"{dialog_id},{page + 1}").pack())
+    kb.button(text="📋 Список", callback_data=AdmCB(action="anon_page", value="0").pack())
+    kb.adjust(3)
+    return kb
+
+
+def _user_label(user_id: int, names: dict[int, str | None]) -> str:
+    username = names.get(user_id)
+    if username:
+        return f"@{html.escape(username)} ({user_id})"
+    return f"<code>{user_id}</code>"
+
+
+def _consent_label(dialog) -> str:
+    mapping = {
+        "approved": "✔",
+        "pending": "⏳",
+        "rejected": "✖",
+    }
+    return f"{mapping.get(dialog.initiator_consent, '?')}/{mapping.get(dialog.target_consent, '?')}"
+
+
+def _format_dialog_line(dlg, names) -> str:
+    status = dlg.status
+    emoji = "🟢" if status == "active" else "⚪️"
+    created = dlg.created_at or "-"
+    closed = dlg.closed_at
+    consent = _consent_label(dlg)
+    initiator = _user_label(dlg.initiator_id, names)
+    target = _user_label(dlg.target_id, names)
+    closed_part = f"• закрыт: {closed}" if closed else ""
+    return (
+        f"{emoji} #{dlg.dialog_code} • {status}\n"
+        f"{initiator} → {target}\n"
+        f"⚙ {consent} • создан: {created} {closed_part}".strip()
+    )
+
+
+def _format_messages(messages, names) -> str:
+    if not messages:
+        return "Нет сообщений."
+    lines = []
+    for msg in messages:
+        ts = msg.created_at or "-"
+        sender = _user_label(msg.sender_id, names)
+        recipient = _user_label(msg.recipient_id, names)
+        body = html.escape(msg.text or "")
+        lines.append(f"{sender} → {recipient}\n{body}\n<code>{ts}</code>")
+    return "\n\n".join(lines)
+
+
+@router.callback_query(AdmCB.filter(F.action == "anon_chats"))
+async def cb_anon_chats(
+    cb: CallbackQuery,
+    session_maker: async_sessionmaker[AsyncSession],
+) -> None:
+    await _send_anon_dialogs_list(cb, session_maker, page=0)
+
+
+@router.callback_query(AdmCB.filter(F.action == "anon_page"))
+async def cb_anon_page(
+    cb: CallbackQuery,
+    callback_data: AdmCB,
+    session_maker: async_sessionmaker[AsyncSession],
+) -> None:
+    page = int(callback_data.value or 0)
+    await _send_anon_dialogs_list(cb, session_maker, page=page)
+
+
+@router.callback_query(AdmCB.filter(F.action == "anon_dialog"))
+async def cb_anon_dialog(
+    cb: CallbackQuery,
+    callback_data: AdmCB,
+    session_maker: async_sessionmaker[AsyncSession],
+) -> None:
+    if not callback_data.value:
+        await _send_anon_dialogs_list(cb, session_maker, page=0)
+        return
+    raw = callback_data.value.replace(":", ",").split(",")
+    dialog_id = int(raw[0])
+    page = int(raw[1]) if len(raw) > 1 else 0
+    async with session_maker() as session:
+        repo = Repo(session)
+        admin_ids = await _get_all_admin_ids(repo)
+        if cb.from_user.id not in admin_ids:
+            await cb.answer("Нет доступа", show_alert=True)
+            return
+        dialog = await repo.get_anon_dialog(dialog_id)
+        if not dialog:
+            await cb.answer("Диалог не найден.", show_alert=True)
+            return
+        total_msgs = await repo.count_anon_messages(dialog_id)
+        total_pages = max(1, ceil(total_msgs / ANON_MESSAGES_PER_PAGE))
+        page = min(max(0, page), total_pages - 1)
+        messages = await repo.get_anon_messages_page(
+            dialog_id,
+            limit=ANON_MESSAGES_PER_PAGE,
+            offset=page * ANON_MESSAGES_PER_PAGE,
+        )
+        user_ids: set[int] = {dialog.initiator_id, dialog.target_id}
+        for msg in messages:
+            user_ids.add(msg.sender_id)
+            user_ids.add(msg.recipient_id)
+        names = await repo.get_usernames(user_ids)
+    dialog_text = _format_dialog_line(dialog, names)
+    msg_text = _format_messages(messages, names)
+    text = (
+        "🕵️ <b>Диалог</b>\n"
+        f"{dialog_text}\n\n"
+        f"Сообщения (стр. {page + 1}/{total_pages}):\n\n{msg_text}"
+    )
+    kb = _anon_dialog_nav(dialog.id, page, total_pages)
+    await cb.message.edit_text(text, parse_mode=ParseMode.HTML, reply_markup=kb.as_markup())
+    await cb.answer()
+
+
+async def _send_anon_dialogs_list(cb: CallbackQuery, session_maker, page: int) -> None:
+    async with session_maker() as session:
+        repo = Repo(session)
+        admin_ids = await _get_all_admin_ids(repo)
+        if cb.from_user.id not in admin_ids:
+            await cb.answer("Нет доступа", show_alert=True)
+            return
+        total = await repo.count_anon_dialogs()
+        total_pages = max(1, ceil(total / ANON_DIALOGS_PER_PAGE))
+        page = min(max(0, page), total_pages - 1)
+        dialogs = await repo.get_anon_dialogs_page(
+            limit=ANON_DIALOGS_PER_PAGE,
+            offset=page * ANON_DIALOGS_PER_PAGE,
+        )
+        user_ids = set()
+        for dlg in dialogs:
+            user_ids.add(dlg.initiator_id)
+            user_ids.add(dlg.target_id)
+        names = await repo.get_usernames(user_ids)
+    lines = [
+        "🕵️ <b>Анонимные чаты</b>",
+        f"Стр. {page + 1}/{total_pages} • всего {total}",
+    ]
+    for dlg in dialogs:
+        lines.append(_format_dialog_line(dlg, names))
+    text = "\n\n".join(lines)
+    kb = InlineKeyboardBuilder()
+    if dialogs:
+        for dlg in dialogs:
+            kb.button(
+                text=f"#{dlg.dialog_code}",
+                callback_data=AdmCB(action="anon_dialog", value=f"{dlg.id},0").pack(),
+            )
+        kb.adjust(2)
+    kb.attach(_anon_list_nav(page, total_pages))
+    await cb.message.edit_text(text, parse_mode=ParseMode.HTML, reply_markup=kb.as_markup())
+    await cb.answer()
 
 
 def _admins_kb_builder() -> InlineKeyboardBuilder:

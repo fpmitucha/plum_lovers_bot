@@ -186,6 +186,10 @@ class AnonDialog(Base):
     status = Column(String, nullable=False, server_default=sa_text("'active'"))
     created_at = Column(String, nullable=False, server_default=sa_text("(CURRENT_TIMESTAMP)"))
     closed_at = Column(String, nullable=True)
+    initiator_header_sent = Column(Integer, nullable=False, server_default=sa_text("0"))
+    target_header_sent = Column(Integer, nullable=False, server_default=sa_text("0"))
+    initiator_consent = Column(String, nullable=False, server_default=sa_text("'approved'"))
+    target_consent = Column(String, nullable=False, server_default=sa_text("'approved'"))
 
 
 class AnonMessage(Base):
@@ -200,6 +204,7 @@ class AnonMessage(Base):
     recipient_id = Column(BigInteger, nullable=False)
     text = Column(Text, nullable=False)
     created_at = Column(String, nullable=False, server_default=sa_text("(CURRENT_TIMESTAMP)"))
+    is_delivered = Column(Integer, nullable=False, server_default=sa_text("1"))
 
 
 class AnonPublicRequest(Base):
@@ -216,6 +221,33 @@ class AnonPublicRequest(Base):
     processed_at = Column(String, nullable=True)
     processed_by = Column(BigInteger, nullable=True)
     reason = Column(Text, nullable=True)
+
+
+class AnonPreference(Base):
+    """
+    Настройки анонимных чатов для пользователя.
+    """
+    __tablename__ = "anon_preferences"
+
+    user_id = Column(BigInteger, primary_key=True)
+    mode = Column(String, nullable=False, server_default=sa_text("'auto'"))  # auto|confirm|reject
+    updated_at = Column(String, nullable=False, server_default=sa_text("(CURRENT_TIMESTAMP)"))
+
+
+class AnonConsentRequest(Base):
+    """
+    Запрос подтверждения для получения анонимного сообщения.
+    """
+    __tablename__ = "anon_consent_requests"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    dialog_id = Column(Integer, ForeignKey("anon_dialogs.id", ondelete="CASCADE"), index=True, nullable=False)
+    recipient_id = Column(BigInteger, nullable=False, index=True)
+    placeholder_message_id = Column(BigInteger, nullable=False)
+    pending_message_id = Column(Integer, ForeignKey("anon_messages.id", ondelete="CASCADE"), nullable=False)
+    status = Column(String, nullable=False, server_default=sa_text("'pending'"))  # pending|approved|rejected
+    created_at = Column(String, nullable=False, server_default=sa_text("(CURRENT_TIMESTAMP)"))
+    responded_at = Column(String, nullable=True)
 
 
 class FireIncident(Base):

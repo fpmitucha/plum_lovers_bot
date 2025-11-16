@@ -17,6 +17,8 @@ from bot.models import (
     AnonDialog,
     AnonMessage,
     AnonPublicRequest,
+    AnonPreference,
+    AnonConsentRequest,
     FireIncident,
     FireCounter,
 )
@@ -53,6 +55,8 @@ def _extract_invite_code(invite_url: str) -> Optional[str]:
 class Repo:
     def __init__(self, session: AsyncSession):
         self.session = session
+        self._dialog_cols_ready = False
+        self._message_cols_ready = False
 
     # ===== служебные таблицы (карма события, индекс сообщений) =====
 
@@ -96,6 +100,52 @@ class Repo:
 
     async def _has_profile_col_db(self, name: str) -> bool:
         return name in (await self._profile_cols_db())
+
+    async def _ensure_anon_dialog_columns(self) -> None:
+        if self._dialog_cols_ready:
+            return
+        cols = await self._dialog_cols_db()
+        table = AnonDialog.__tablename__
+        targets = {
+            "initiator_header_sent": "INTEGER NOT NULL DEFAULT 0",
+            "target_header_sent": "INTEGER NOT NULL DEFAULT 0",
+            "initiator_consent": "TEXT NOT NULL DEFAULT 'approved'",
+            "target_consent": "TEXT NOT NULL DEFAULT 'approved'",
+        }
+        for name, ddl in targets.items():
+            if name in cols:
+                continue
+            try:
+                await self.session.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
+            except OperationalError as exc:
+                if "duplicate column name" not in str(exc).lower():
+                    raise
+        await self.session.commit()
+        self._dialog_cols_ready = True
+
+    async def _ensure_anon_message_columns(self) -> None:
+        if self._message_cols_ready:
+            return
+        cols = await self._message_cols_db()
+        table = AnonMessage.__tablename__
+        if "is_delivered" not in cols:
+            try:
+                await self.session.execute(text(f"ALTER TABLE {table} ADD COLUMN is_delivered INTEGER NOT NULL DEFAULT 1"))
+            except OperationalError as exc:
+                if "duplicate column name" not in str(exc).lower():
+                    raise
+            await self.session.commit()
+        self._message_cols_ready = True
+
+    async def _dialog_cols_db(self) -> set[str]:
+        table = AnonDialog.__tablename__
+        res = await self.session.execute(text(f"PRAGMA table_info({table})"))
+        return {row[1] for row in res.all()}
+
+    async def _message_cols_db(self) -> set[str]:
+        table = AnonMessage.__tablename__
+        res = await self.session.execute(text(f"PRAGMA table_info({table})"))
+        return {row[1] for row in res.all()}
 
     # ---- KARMA + рейтинг -------------------------------------------------
 
@@ -633,6 +683,16 @@ class Repo:
         res = await self.session.execute(select(Profile.user_id).where(Profile.user_id == user_id))
         return res.scalar_one_or_none() is not None
 
+    async def find_user_id_by_username(self, username: str) -> int | None:
+        if not username:
+            return None
+        normalized = username.lower()
+        res = await self.session.execute(
+            select(Profile.user_id).where(func.lower(Profile.username) == normalized)
+        )
+        val = res.scalar_one_or_none()
+        return int(val) if val is not None else None
+
     async def update_profile_username(self, user_id: int, username: str | None) -> None:
         mapped = self._profile_cols_mapped()
         values: dict = {}
@@ -658,6 +718,15 @@ class Repo:
         res = await self.session.execute(select(Profile).where(Profile.user_id.in_(ids)))
         by_id = {p.user_id: p for p in res.scalars()}
         return [by_id[i] for i in ids if i in by_id]
+
+    async def get_usernames(self, user_ids: Iterable[int]) -> dict[int, str | None]:
+        ids = [int(i) for i in set(user_ids) if i]
+        if not ids:
+            return {}
+        res = await self.session.execute(
+            select(Profile.user_id, Profile.username).where(Profile.user_id.in_(ids))
+        )
+        return {row[0]: row[1] for row in res.all()}
 
     async def has_registered(self, user_id: int) -> bool:
         if await self.profile_exists(user_id):
@@ -704,13 +773,17 @@ class Repo:
         initiator_id: int,
         target_id: int,
         kind: str = "user",
+        target_consent: str = "approved",
     ) -> AnonDialog:
+        await self._ensure_anon_dialog_columns()
         dialog = AnonDialog(
             dialog_code=dialog_code,
             initiator_id=initiator_id,
             target_id=target_id,
             kind=kind,
             status="active",
+            initiator_consent="approved",
+            target_consent=target_consent,
         )
         self.session.add(dialog)
         await self.session.commit()
@@ -718,8 +791,16 @@ class Repo:
         return dialog
 
     async def get_anon_dialog_by_code(self, dialog_code: str) -> AnonDialog | None:
+        await self._ensure_anon_dialog_columns()
         res = await self.session.execute(
             select(AnonDialog).where(AnonDialog.dialog_code == dialog_code)
+        )
+        return res.scalar_one_or_none()
+
+    async def get_anon_dialog(self, dialog_id: int) -> AnonDialog | None:
+        await self._ensure_anon_dialog_columns()
+        res = await self.session.execute(
+            select(AnonDialog).where(AnonDialog.id == dialog_id)
         )
         return res.scalar_one_or_none()
 
@@ -729,6 +810,7 @@ class Repo:
         *,
         kind: str | None = None,
     ) -> AnonDialog | None:
+        await self._ensure_anon_dialog_columns()
         stmt = (
             select(AnonDialog)
             .where(
@@ -746,6 +828,7 @@ class Repo:
         return res.scalar_one_or_none()
 
     async def close_anon_dialog(self, dialog_id: int) -> None:
+        await self._ensure_anon_dialog_columns()
         await self.session.execute(
             update(AnonDialog)
             .where(AnonDialog.id == dialog_id)
@@ -760,17 +843,229 @@ class Repo:
         sender_id: int,
         recipient_id: int,
         text: str,
+        delivered: bool = True,
     ) -> AnonMessage:
+        await self._ensure_anon_message_columns()
         msg = AnonMessage(
             dialog_id=dialog_id,
             sender_id=sender_id,
             recipient_id=recipient_id,
             text=text,
+            is_delivered=1 if delivered else 0,
         )
         self.session.add(msg)
         await self.session.commit()
         await self.session.refresh(msg)
         return msg
+
+    async def mark_dialog_header_sent(self, dialog_id: int, role: str) -> None:
+        await self._ensure_anon_dialog_columns()
+        column = "initiator_header_sent" if role == "initiator" else "target_header_sent"
+        await self.session.execute(
+            update(AnonDialog)
+            .where(AnonDialog.id == dialog_id)
+            .values({column: 1})
+        )
+        await self.session.commit()
+
+    async def set_dialog_consent(self, dialog_id: int, role: str, status: str) -> None:
+        await self._ensure_anon_dialog_columns()
+        column = "initiator_consent" if role == "initiator" else "target_consent"
+        await self.session.execute(
+            update(AnonDialog)
+            .where(AnonDialog.id == dialog_id)
+            .values({column: status})
+        )
+        await self.session.commit()
+
+    async def get_dialog_consent(self, dialog_id: int, role: str) -> str:
+        await self._ensure_anon_dialog_columns()
+        column = AnonDialog.initiator_consent if role == "initiator" else AnonDialog.target_consent
+        res = await self.session.execute(
+            select(column).where(AnonDialog.id == dialog_id)
+        )
+        val = res.scalar_one_or_none()
+        return val or "approved"
+
+    async def get_anon_message(self, message_id: int) -> AnonMessage | None:
+        await self._ensure_anon_message_columns()
+        res = await self.session.execute(
+            select(AnonMessage).where(AnonMessage.id == message_id)
+        )
+        return res.scalar_one_or_none()
+
+    async def set_message_delivered(self, message_id: int, delivered: bool) -> None:
+        await self._ensure_anon_message_columns()
+        await self.session.execute(
+            update(AnonMessage)
+            .where(AnonMessage.id == message_id)
+            .values(is_delivered=1 if delivered else 0)
+        )
+        await self.session.commit()
+
+    async def has_reply_since(self, dialog_id: int, message_id: int, user_id: int) -> bool:
+        res = await self.session.execute(
+            select(AnonMessage.id)
+            .where(
+                and_(
+                    AnonMessage.dialog_id == dialog_id,
+                    AnonMessage.id > message_id,
+                    AnonMessage.sender_id == user_id,
+                )
+            )
+            .limit(1)
+        )
+        return res.scalar_one_or_none() is not None
+
+    async def list_recent_anon_dialogs(self, *, limit: int = 10, status: str | None = None) -> list[AnonDialog]:
+        await self._ensure_anon_dialog_columns()
+        stmt = select(AnonDialog).order_by(AnonDialog.id.desc()).limit(limit)
+        if status:
+            stmt = stmt.where(AnonDialog.status == status)
+        res = await self.session.execute(stmt)
+        return list(res.scalars().all())
+
+    async def count_anon_dialogs(self, *, status: str | None = None) -> int:
+        await self._ensure_anon_dialog_columns()
+        stmt = select(func.count()).select_from(AnonDialog)
+        if status:
+            stmt = stmt.where(AnonDialog.status == status)
+        res = await self.session.execute(stmt)
+        return int(res.scalar_one())
+
+    async def get_anon_dialogs_page(
+        self,
+        *,
+        limit: int,
+        offset: int,
+        status: str | None = None,
+    ) -> list[AnonDialog]:
+        await self._ensure_anon_dialog_columns()
+        stmt = (
+            select(AnonDialog)
+            .order_by(AnonDialog.id.desc())
+            .offset(max(0, offset))
+            .limit(limit)
+        )
+        if status:
+            stmt = stmt.where(AnonDialog.status == status)
+        res = await self.session.execute(stmt)
+        return list(res.scalars().all())
+
+    async def count_anon_messages(self, dialog_id: int) -> int:
+        await self._ensure_anon_message_columns()
+        stmt = select(func.count()).select_from(AnonMessage).where(AnonMessage.dialog_id == dialog_id)
+        res = await self.session.execute(stmt)
+        return int(res.scalar_one())
+
+    async def get_anon_messages_page(
+        self,
+        dialog_id: int,
+        *,
+        limit: int,
+        offset: int,
+    ) -> list[AnonMessage]:
+        await self._ensure_anon_message_columns()
+        stmt = (
+            select(AnonMessage)
+            .where(AnonMessage.dialog_id == dialog_id)
+            .order_by(AnonMessage.id.desc())
+            .offset(max(0, offset))
+            .limit(limit)
+        )
+        res = await self.session.execute(stmt)
+        rows = list(res.scalars().all())
+        return list(reversed(rows))
+
+    # -------- ANON SETTINGS --------
+
+    async def get_anon_pref_mode(self, user_id: int) -> str:
+        res = await self.session.execute(
+            select(AnonPreference).where(AnonPreference.user_id == user_id)
+        )
+        pref = res.scalar_one_or_none()
+        return pref.mode if pref else "auto"
+
+    async def set_anon_pref_mode(self, user_id: int, mode: str) -> None:
+        existing = await self.session.execute(
+            select(AnonPreference).where(AnonPreference.user_id == user_id)
+        )
+        pref = existing.scalar_one_or_none()
+        now = now_str()
+        if pref:
+            await self.session.execute(
+                update(AnonPreference)
+                .where(AnonPreference.user_id == user_id)
+                .values(mode=mode, updated_at=now)
+            )
+        else:
+            self.session.add(AnonPreference(user_id=user_id, mode=mode, updated_at=now))
+        await self.session.commit()
+
+    # -------- CONSENT REQUESTS --------
+
+    async def create_consent_request(
+        self,
+        *,
+        dialog_id: int,
+        recipient_id: int,
+        placeholder_message_id: int,
+        pending_message_id: int,
+    ) -> AnonConsentRequest:
+        request = AnonConsentRequest(
+            dialog_id=dialog_id,
+            recipient_id=recipient_id,
+            placeholder_message_id=placeholder_message_id,
+            pending_message_id=pending_message_id,
+            status="pending",
+        )
+        self.session.add(request)
+        await self.session.commit()
+        await self.session.refresh(request)
+        return request
+
+    async def get_consent_request(self, request_id: int) -> AnonConsentRequest | None:
+        res = await self.session.execute(
+            select(AnonConsentRequest).where(AnonConsentRequest.id == request_id)
+        )
+        return res.scalar_one_or_none()
+
+    async def get_pending_consent_request(self, dialog_id: int, recipient_id: int) -> AnonConsentRequest | None:
+        res = await self.session.execute(
+            select(AnonConsentRequest)
+            .where(
+                and_(
+                    AnonConsentRequest.dialog_id == dialog_id,
+                    AnonConsentRequest.recipient_id == recipient_id,
+                    AnonConsentRequest.status == "pending",
+                )
+            )
+            .order_by(AnonConsentRequest.id.desc())
+            .limit(1)
+        )
+        return res.scalar_one_or_none()
+
+    async def update_consent_request_status(
+        self,
+        *,
+        request_id: int,
+        status: str,
+    ) -> None:
+        await self.session.execute(
+            update(AnonConsentRequest)
+            .where(AnonConsentRequest.id == request_id)
+            .values(status=status, responded_at=now_str())
+        )
+        await self.session.commit()
+
+    async def update_consent_placeholder(self, request_id: int, message_id: int) -> None:
+        await self.session.execute(
+            update(AnonConsentRequest)
+            .where(AnonConsentRequest.id == request_id)
+            .values(placeholder_message_id=message_id)
+        )
+        await self.session.commit()
+
 
     async def create_public_request(self, *, user_id: int, text: str) -> AnonPublicRequest:
         req = AnonPublicRequest(user_id=user_id, text=text, status="pending")

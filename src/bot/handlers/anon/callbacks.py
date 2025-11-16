@@ -13,3 +13,12 @@ class DialogCB(CallbackData, prefix="anonchat"):
 class PublicCB(CallbackData, prefix="anonpub"):
     action: str
     request_id: int
+
+
+class PrefCB(CallbackData, prefix="anonpref"):
+    mode: str
+
+
+class ConsentCB(CallbackData, prefix="anoncons"):
+    action: str
+    request_id: int

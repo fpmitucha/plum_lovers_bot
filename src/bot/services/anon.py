@@ -60,6 +60,10 @@ class DialogSnapshot:
     target_id: int
     kind: str
     status: str
+    initiator_header_sent: int
+    target_header_sent: int
+    initiator_consent: str
+    target_consent: str
 
 
 def snapshot(dialog) -> DialogSnapshot:
@@ -72,6 +76,10 @@ def snapshot(dialog) -> DialogSnapshot:
         target_id=dialog.target_id,
         kind=getattr(dialog, "kind", "user"),
         status=getattr(dialog, "status", "active"),
+        initiator_header_sent=int(getattr(dialog, "initiator_header_sent", 0) or 0),
+        target_header_sent=int(getattr(dialog, "target_header_sent", 0) or 0),
+        initiator_consent=getattr(dialog, "initiator_consent", "approved"),
+        target_consent=getattr(dialog, "target_consent", "approved"),
     )
 
 
@@ -91,10 +99,7 @@ async def resolve_user_identifier(raw: str) -> Optional[int]:
     if not candidate:
         return None
     if candidate.startswith("@"):
-        info = await asyncio.to_thread(UserInfoSource().get_user_info, candidate.lstrip("@"))
-        if "id" not in info:
-            raise ValueError("User not found")
-        return int(info["id"])
+        raise ValueError("username_lookup_disabled")
     return int(candidate)
 
 
