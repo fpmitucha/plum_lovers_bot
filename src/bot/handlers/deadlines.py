@@ -7,8 +7,6 @@ from aiogram.types import Message
 from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
 import logging
 from bot.utils.repo import Repo
-from datetime import datetime
-from zoneinfo import ZoneInfo
 
 router = Router(name="deadlines")
 

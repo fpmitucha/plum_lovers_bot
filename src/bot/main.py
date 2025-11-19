@@ -37,6 +37,10 @@ from bot.utils.db import create_engine, create_session_factory
 from bot.utils.parse_deadlines import parse_deadlines
 from bot.models.models import Base
 
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
+from zoneinfo import ZoneInfo
+
 
 async def set_bot_commands(bot: Bot) -> None:
     """Зарегистрировать команды бота в интерфейсе Telegram."""
@@ -87,6 +91,39 @@ async def on_startup(dp: Dispatcher, bot: Bot, engine):
 
     await set_bot_commands(bot)
     await seed_roster_if_needed(session_maker)
+
+    # Настройка планировщика
+    scheduler = AsyncIOScheduler(timezone=ZoneInfo("Europe/Moscow"))
+
+    # Первый запуск: каждый день в 00:20
+    scheduler.add_job(
+        parse_deadlines,
+        trigger=CronTrigger(hour=0, minute=20),
+        args=[session_maker],
+        id="daily_deadlines_parse_0020",
+        replace_existing=True,
+    )
+
+    # Второй запуск: каждый день в 12:50
+    scheduler.add_job(
+        parse_deadlines,
+        trigger=CronTrigger(hour=12, minute=50),
+        args=[session_maker],
+        id="daily_deadlines_parse_1250",
+        replace_existing=True,
+    )
+
+    # scheduler.add_job(
+    #     parse_deadlines,
+    #     trigger=CronTrigger(hour=4, minute=55),
+    #     args=[session_maker],
+    #     id="daily_deadlines_parse_0455",
+    #     replace_existing=True,
+    # )
+
+    scheduler.start()
+    dp.workflow_data["scheduler"] = scheduler
+
     asyncio.create_task(parse_deadlines(session_maker))
 
 
@@ -130,7 +167,16 @@ async def main():
         "message_reaction",
         "message_reaction_count",
     ]
-    await dp.start_polling(bot, allowed_updates=allowed_updates)
+
+    try:
+        await dp.start_polling(bot, allowed_updates=allowed_updates)
+    finally:
+        scheduler = dp.get("scheduler")
+        if scheduler:
+            scheduler.shutdown()
+        await bot.session.close()
+
+    # await dp.start_polling(bot, allowed_updates=allowed_updates)
 
 
 if __name__ == "__main__":

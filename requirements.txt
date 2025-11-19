@@ -11,3 +11,4 @@ audioop-lts>=0.2; python_version>="3.13"
 beautifulsoup4>=4.14.2
 requests>=2.32.3
 python-dateutil>=2.9.0.post0
+APScheduler>=3.11.1
