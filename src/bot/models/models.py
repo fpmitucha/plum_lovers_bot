@@ -21,6 +21,7 @@ from sqlalchemy import (
     UniqueConstraint,
     Column,
     ForeignKey,
+    DateTime,
 )
 from sqlalchemy.sql import text as sa_text
 from sqlalchemy.orm import declarative_base
@@ -37,6 +38,7 @@ class Roster(Base):
         slug       (str)     — нормализованный slug участника (уникален).
         created_at (str)     — дата/время создания записи (UTC, TEXT).
     """
+
     __tablename__ = "roster"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -58,6 +60,7 @@ class Application(Base):
         created_at (str)      — когда создана заявка (UTC, TEXT).
         updated_at (str)      — когда последний раз правили (UTC, TEXT).
     """
+
     __tablename__ = "applications"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -86,6 +89,7 @@ class Invite(Base):
         created_at  (str)  — когда выдали (UTC, TEXT).
         updated_at  (str)  — когда правили (UTC, TEXT).
     """
+
     __tablename__ = "invites"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -109,6 +113,7 @@ class Blacklist(Base):
         reason     (str|None) — причина блокировки/комментарий.
         created_at (str)      — дата/время добавления (UTC, TEXT).
     """
+
     __tablename__ = "blacklist"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -118,9 +123,7 @@ class Blacklist(Base):
 
     created_at = Column(String, nullable=False, server_default=sa_text("(CURRENT_TIMESTAMP)"))
 
-    __table_args__ = (
-        UniqueConstraint("user_id", name="uq_blacklist_user"),
-    )
+    __table_args__ = (UniqueConstraint("user_id", name="uq_blacklist_user"),)
 
 
 class Admin(Base):
@@ -132,15 +135,14 @@ class Admin(Base):
         user_id    (int)  — Telegram user id (уникален).
         created_at (str)  — когда добавили.
     """
+
     __tablename__ = "admins"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(BigInteger, index=True, unique=True, nullable=False)
     created_at = Column(String, nullable=False, server_default=sa_text("(CURRENT_TIMESTAMP)"))
 
-    __table_args__ = (
-        UniqueConstraint("user_id", name="uq_admin_user"),
-    )
+    __table_args__ = (UniqueConstraint("user_id", name="uq_admin_user"),)
 
 
 class Profile(Base):
@@ -155,19 +157,19 @@ class Profile(Base):
         created_at (str)      — когда создан профиль.
         updated_at (str)      — когда последний раз обновляли.
     """
+
     __tablename__ = "profiles"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(BigInteger, index=True, unique=True, nullable=False)
     username = Column(String, nullable=True)
     points = Column(Integer, nullable=False, server_default=sa_text("10"))
+    eng_group = Column(String, nullable=True)
 
     created_at = Column(String, nullable=False, server_default=sa_text("(CURRENT_TIMESTAMP)"))
     updated_at = Column(String, nullable=False, server_default=sa_text("(CURRENT_TIMESTAMP)"))
 
-    __table_args__ = (
-        UniqueConstraint("user_id", name="uq_profile_user"),
-    )
+    __table_args__ = (UniqueConstraint("user_id", name="uq_profile_user"),)
 
 
 class AnonDialog(Base):
@@ -176,6 +178,7 @@ class AnonDialog(Base):
     kind: 'user' | 'admin'
     status: 'active' | 'closed'
     """
+
     __tablename__ = "anon_dialogs"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -192,10 +195,13 @@ class AnonMessage(Base):
     """
     Сообщения анонимного диалога, сохраняем для аудита/повторов.
     """
+
     __tablename__ = "anon_messages"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    dialog_id = Column(Integer, ForeignKey("anon_dialogs.id", ondelete="CASCADE"), index=True, nullable=False)
+    dialog_id = Column(
+        Integer, ForeignKey("anon_dialogs.id", ondelete="CASCADE"), index=True, nullable=False
+    )
     sender_id = Column(BigInteger, nullable=False)
     recipient_id = Column(BigInteger, nullable=False)
     text = Column(Text, nullable=False)
@@ -206,12 +212,15 @@ class AnonPublicRequest(Base):
     """
     Очередь анонимных сообщений в общий чат (с модерацией).
     """
+
     __tablename__ = "anon_public_requests"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(BigInteger, nullable=False, index=True)
     text = Column(Text, nullable=False)
-    status = Column(String, nullable=False, server_default=sa_text("'pending'"))  # pending|approved|rejected|failed
+    status = Column(
+        String, nullable=False, server_default=sa_text("'pending'")
+    )  # pending|approved|rejected|failed
     created_at = Column(String, nullable=False, server_default=sa_text("(CURRENT_TIMESTAMP)"))
     processed_at = Column(String, nullable=True)
     processed_by = Column(BigInteger, nullable=True)
@@ -222,13 +231,16 @@ class FireIncident(Base):
     """
     Заявка о сработавшей пожарной сигнализации в дорме.
     """
+
     __tablename__ = "fire_incidents"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     dorm_number = Column(Integer, nullable=False, index=True)
     user_id = Column(BigInteger, nullable=False)
     description = Column(Text, nullable=True)
-    status = Column(String, nullable=False, server_default=sa_text("'pending'"))  # pending|approved|rejected
+    status = Column(
+        String, nullable=False, server_default=sa_text("'pending'")
+    )  # pending|approved|rejected
     created_at = Column(String, nullable=False, server_default=sa_text("(CURRENT_TIMESTAMP)"))
     processed_at = Column(String, nullable=True)
     processed_by = Column(BigInteger, nullable=True)
@@ -239,8 +251,34 @@ class FireCounter(Base):
     """
     Счётчик подтверждённых пожарок по каждому дорму.
     """
+
     __tablename__ = "fire_counters"
 
     dorm_number = Column(Integer, primary_key=True)
     total = Column(Integer, nullable=False, server_default=sa_text("0"))
     updated_at = Column(String, nullable=False, server_default=sa_text("(CURRENT_TIMESTAMP)"))
+
+
+class Deadline(Base):
+    """Дедлайны из мудла
+
+    Атрибуты:
+        id          (int)      — PK.
+        task_id     (int)      — id задание в Мудле
+        start_at    (str)      — когда открывается задание.
+        end_at      (str)      — когда зыкрывается задание.
+        course_name (str)      — название курса (например: [F25] Foreign Language (Tue/Thu)).
+        task_name   (str)      — название задания (например: Listening 1.WB p.25, ex 5 b).
+    """
+
+    __tablename__ = "deadlines"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    task_id = Column(String, nullable=False, unique=True)  # Уникальный ID из API
+    start_at = Column(DateTime, nullable=False)
+    end_at = Column(DateTime, nullable=False)
+    course_name = Column(String(255), nullable=False)  # e.g. "Academic English B2"
+    task_name = Column(Text, nullable=False)
+
+    def __repr__(self):
+        return f"<Deadline(course='{self.course_name}', task_name='{self.task_name}. From '{self.start_at} to '{self.end_at}')>"

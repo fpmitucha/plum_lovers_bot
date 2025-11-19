@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Iterable, Tuple
 
+from zoneinfo import ZoneInfo
 from sqlalchemy import select, update, delete, and_, or_, func, text, inspect as sa_inspect
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import OperationalError  # ← добавлено
@@ -19,12 +20,15 @@ from bot.models import (
     AnonPublicRequest,
     FireIncident,
     FireCounter,
+    Deadline,
 )
 
 # ---------- helpers ----------
 
+
 def now_dt() -> datetime:
     return datetime.now(timezone.utc)
+
 
 def now_str() -> str:
     return now_dt().strftime("%Y-%m-%d %H:%M:%S")
@@ -37,7 +41,7 @@ def _extract_invite_code(invite_url: str) -> Optional[str]:
     if "://" in url:
         url = url.split("://", 1)[1]
     if url.startswith("t.me/"):
-        url = url[len("t.me/"):]
+        url = url[len("t.me/") :]
     parts = url.split("/")
     tail = parts[-1] if parts else url
     if tail.startswith("+"):
@@ -50,6 +54,7 @@ def _extract_invite_code(invite_url: str) -> Optional[str]:
 
 # ---------- repository ----------
 
+
 class Repo:
     def __init__(self, session: AsyncSession):
         self.session = session
@@ -58,7 +63,8 @@ class Repo:
 
     async def ensure_aux_tables(self) -> None:
         # события кармы (+/-), чтобы считать статистику
-        await self.session.execute(text("""
+        await self.session.execute(
+            text("""
         CREATE TABLE IF NOT EXISTS karma_events (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id   INTEGER NOT NULL,
@@ -69,9 +75,11 @@ class Repo:
             reason    TEXT,
             created_at TEXT NOT NULL
         )
-        """))
+        """)
+        )
         # индекс собственных сообщений пользователя в чатах — нужен для реакций
-        await self.session.execute(text("""
+        await self.session.execute(
+            text("""
         CREATE TABLE IF NOT EXISTS messages_index (
             chat_id    INTEGER NOT NULL,
             message_id INTEGER NOT NULL,
@@ -80,7 +88,8 @@ class Repo:
             neg_count  INTEGER NOT NULL DEFAULT 0,
             PRIMARY KEY (chat_id, message_id)
         )
-        """))
+        """)
+        )
         await self.session.commit()
 
     # ===== колонки (БД vs ORM-мэппинг) =====
@@ -236,7 +245,9 @@ class Repo:
         )
         await self.session.commit()
 
-    async def karma_stats(self, user_id: int, *, since: Optional[datetime] = None, until: Optional[datetime] = None) -> tuple[int, int]:
+    async def karma_stats(
+        self, user_id: int, *, since: Optional[datetime] = None, until: Optional[datetime] = None
+    ) -> tuple[int, int]:
         clauses = ["user_id = :uid"]
         params = {"uid": int(user_id)}
         if since is not None:
@@ -260,7 +271,9 @@ class Repo:
         row = res.first()
         return int(row[0] or 0), int(row[1] or 0)
 
-    async def karma_stats_all_users(self, *, since: datetime, until: datetime) -> dict[int, tuple[int, int]]:
+    async def karma_stats_all_users(
+        self, *, since: datetime, until: datetime
+    ) -> dict[int, tuple[int, int]]:
         res = await self.session.execute(
             text("""
                 SELECT user_id,
@@ -289,7 +302,9 @@ class Repo:
         )
         await self.session.commit()
 
-    async def get_message_owner_and_counters(self, *, chat_id: int, message_id: int) -> tuple[int | None, int, int]:
+    async def get_message_owner_and_counters(
+        self, *, chat_id: int, message_id: int
+    ) -> tuple[int | None, int, int]:
         res = await self.session.execute(
             text("""
             SELECT user_id, pos_count, neg_count
@@ -306,7 +321,9 @@ class Repo:
     async def apply_reaction_tally(
         self, *, chat_id: int, message_id: int, new_pos: int, new_neg: int
     ) -> None:
-        owner_id, old_pos, old_neg = await self.get_message_owner_and_counters(chat_id=chat_id, message_id=message_id)
+        owner_id, old_pos, old_neg = await self.get_message_owner_and_counters(
+            chat_id=chat_id, message_id=message_id
+        )
         if owner_id is None:
             return
         dp = max(0, int(new_pos) - int(old_pos))
@@ -327,13 +344,18 @@ class Repo:
 
         if dp:
             await self.add_karma(owner_id, dp)
-            await self.log_karma_event(owner_id, dp, chat_id=chat_id, message_id=message_id, reason="reactions:+")
+            await self.log_karma_event(
+                owner_id, dp, chat_id=chat_id, message_id=message_id, reason="reactions:+"
+            )
         if dn:
             await self.add_karma(owner_id, -dn)
-            await self.log_karma_event(owner_id, -dn, chat_id=chat_id, message_id=message_id, reason="reactions:-")
+            await self.log_karma_event(
+                owner_id, -dn, chat_id=chat_id, message_id=message_id, reason="reactions:-"
+            )
 
     async def apply_reply_karma(
-        self, *,
+        self,
+        *,
         target_user_id: int,
         delta: int,
         chat_id: int,
@@ -343,7 +365,12 @@ class Repo:
     ) -> None:
         await self.add_karma(target_user_id, delta)
         await self.log_karma_event(
-            target_user_id, delta, chat_id=chat_id, message_id=message_id, reason=reason, actor_id=actor_id
+            target_user_id,
+            delta,
+            chat_id=chat_id,
+            message_id=message_id,
+            reason=reason,
+            actor_id=actor_id,
         )
 
     # -------- ROSTER --------
@@ -392,11 +419,16 @@ class Repo:
     async def roster_page(self, *, page: int, page_size: int) -> list[Roster]:
         offset = page * page_size
         res = await self.session.execute(
-            select(Roster).order_by(Roster.slug.asc(), Roster.id.asc()).offset(offset).limit(page_size)
+            select(Roster)
+            .order_by(Roster.slug.asc(), Roster.id.asc())
+            .offset(offset)
+            .limit(page_size)
         )
         return list(res.scalars().all())
 
-    async def roster_search(self, query: str, *, page: int, page_size: int) -> tuple[int, list[Roster]]:
+    async def roster_search(
+        self, query: str, *, page: int, page_size: int
+    ) -> tuple[int, list[Roster]]:
         words = [w for w in query.lower().split() if w]
         cond = True
         for w in words:
@@ -407,7 +439,11 @@ class Repo:
 
         offset = page * page_size
         rows_res = await self.session.execute(
-            select(Roster).where(cond).order_by(Roster.slug.asc(), Roster.id.asc()).offset(offset).limit(page_size)
+            select(Roster)
+            .where(cond)
+            .order_by(Roster.slug.asc(), Roster.id.asc())
+            .offset(offset)
+            .limit(page_size)
         )
         return total, list(rows_res.scalars().all())
 
@@ -454,7 +490,9 @@ class Repo:
         )
         return res.scalar_one_or_none() is not None
 
-    async def set_application_status(self, app_id: int, *, status: str, reason: str | None = None) -> None:
+    async def set_application_status(
+        self, app_id: int, *, status: str, reason: str | None = None
+    ) -> None:
         await self.session.execute(
             update(Application)
             .where(Application.id == app_id)
@@ -469,18 +507,26 @@ class Repo:
         res = await self.session.execute(stmt)
         return int(res.scalar() or 0)
 
-    async def applications_page(self, *, page: int, page_size: int, status: str | None = None) -> list[Application]:
+    async def applications_page(
+        self, *, page: int, page_size: int, status: str | None = None
+    ) -> list[Application]:
         offset = page * page_size
         stmt = select(Application)
         if status and status != "all":
             stmt = stmt.where(Application.status == status)
-        stmt = stmt.order_by(Application.created_at.desc(), Application.id.desc()).offset(offset).limit(page_size)
+        stmt = (
+            stmt.order_by(Application.created_at.desc(), Application.id.desc())
+            .offset(offset)
+            .limit(page_size)
+        )
         res = await self.session.execute(stmt)
         return list(res.scalars().all())
 
     # -------- INVITES --------
 
-    async def add_invite(self, *, user_id: int, chat_id: int, invite_link: str, expires_at: str) -> Invite:
+    async def add_invite(
+        self, *, user_id: int, chat_id: int, invite_link: str, expires_at: str
+    ) -> Invite:
         inv = Invite(
             user_id=user_id,
             chat_id=chat_id,
@@ -507,9 +553,7 @@ class Repo:
         if not code:
             return None
 
-        res = await self.session.execute(
-            select(Invite).where(Invite.invite_link.like(f"%{code}"))
-        )
+        res = await self.session.execute(select(Invite).where(Invite.invite_link.like(f"%{code}")))
         return res.scalar_one_or_none()
 
     async def get_active_invite(self, user_id: int) -> Invite | None:
@@ -536,12 +580,18 @@ class Repo:
         res = await self.session.execute(stmt)
         return int(res.scalar() or 0)
 
-    async def invites_page(self, *, page: int, page_size: int, active_only: bool = False) -> list[Invite]:
+    async def invites_page(
+        self, *, page: int, page_size: int, active_only: bool = False
+    ) -> list[Invite]:
         offset = page * page_size
         stmt = select(Invite)
         if active_only:
             stmt = stmt.where(Invite.expires_at > now_str())
-        stmt = stmt.order_by(Invite.created_at.desc(), Invite.id.desc()).offset(offset).limit(page_size)
+        stmt = (
+            stmt.order_by(Invite.created_at.desc(), Invite.id.desc())
+            .offset(offset)
+            .limit(page_size)
+        )
         res = await self.session.execute(stmt)
         return list(res.scalars().all())
 
@@ -575,19 +625,28 @@ class Repo:
     async def blacklist_page(self, *, page: int, page_size: int) -> list[Blacklist]:
         offset = page * page_size
         res = await self.session.execute(
-            select(Blacklist).order_by(Blacklist.created_at.desc(), Blacklist.id.desc()).offset(offset).limit(page_size)
+            select(Blacklist)
+            .order_by(Blacklist.created_at.desc(), Blacklist.id.desc())
+            .offset(offset)
+            .limit(page_size)
         )
         return list(res.scalars().all())
 
     # -------- PROFILES --------
 
-    async def ensure_profile(self, *, user_id: int, username: str | None, slug: str | None) -> Profile:
+    async def ensure_profile(
+        self, *, user_id: int, username: str | None, slug: str | None
+    ) -> Profile:
         mapped = self._profile_cols_mapped()
 
         p = await self.get_profile(user_id)
         if p:
             upd: dict = {}
-            if "username" in mapped and username is not None and getattr(p, "username", None) != username:
+            if (
+                "username" in mapped
+                and username is not None
+                and getattr(p, "username", None) != username
+            ):
                 upd["username"] = username
             if "slug" in mapped and slug is not None and getattr(p, "slug", None) != slug:
                 upd["slug"] = slug
@@ -611,7 +670,9 @@ class Repo:
         if await self._has_profile_col_db("joined_at") and "joined_at" not in mapped:
             table = Profile.__tablename__
             await self.session.execute(
-                text(f"UPDATE {table} SET joined_at = :ts WHERE user_id = :uid AND joined_at IS NULL"),
+                text(
+                    f"UPDATE {table} SET joined_at = :ts WHERE user_id = :uid AND joined_at IS NULL"
+                ),
                 {"ts": now_str(), "uid": int(user_id)},
             )
 
@@ -646,7 +707,9 @@ class Repo:
         if await self._has_profile_col_db("joined_at") and "joined_at" not in mapped:
             table = Profile.__tablename__
             await self.session.execute(
-                text(f"UPDATE {table} SET joined_at = :ts WHERE user_id = :uid AND joined_at IS NULL"),
+                text(
+                    f"UPDATE {table} SET joined_at = :ts WHERE user_id = :uid AND joined_at IS NULL"
+                ),
                 {"ts": now_str(), "uid": int(user_id)},
             )
             await self.session.commit()
@@ -677,6 +740,14 @@ class Repo:
             f"<b>Карма:</b> <b>{karma}</b>\n"
             f"<b>Место в топе:</b> <b>{rank_str}</b>"
         )
+
+    async def set_eng_group_profile(self, user_id: int, eng_group: str) -> Optional[str]:
+        res = await self.session.execute(select(Profile).where(Profile.user_id == user_id))
+        profile = res.scalar_one_or_none()
+        profile.eng_group = eng_group
+        await self.session.commit()
+        await self.session.refresh(profile)
+        return eng_group
 
     # -------- ADMINS --------
 
@@ -872,4 +943,46 @@ class Repo:
         res = await self.session.execute(
             select(FireCounter).order_by(FireCounter.total.desc(), FireCounter.dorm_number.asc())
         )
+        return list(res.scalars().all())
+
+    # ------ DEADLINES ---------
+    async def add_deadline(
+        self,
+        *,
+        task_id: int,
+        start_at: datetime,
+        end_at: datetime,
+        task_name: str,
+        course_name: str,
+    ) -> Deadline:
+        result = await self.session.execute(select(Deadline).where(Deadline.task_id == task_id))
+        deadline = result.scalar_one_or_none()
+        if deadline:
+            return deadline
+        deadline = Deadline(
+            task_id=task_id,
+            start_at=start_at,
+            end_at=end_at,
+            task_name=task_name,
+            course_name=course_name,
+        )
+        self.session.add(deadline)
+        await self.session.flush()
+        await self.session.commit()
+        await self.session.refresh(deadline)
+        return deadline
+
+    async def get_deadlines(
+        self,
+        *,
+        course_names: list[str],
+    ) -> list[Deadline]:
+        now_time = datetime.now(ZoneInfo("Europe/Moscow"))
+
+        res = await self.session.execute(
+            select(Deadline)
+            .where(Deadline.end_at >= now_time)
+            .where(Deadline.course_name.in_(course_names))
+        )
+
         return list(res.scalars().all())

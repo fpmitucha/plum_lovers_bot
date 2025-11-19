@@ -3,6 +3,7 @@
 
 Предоставляет доступ к базовым классам и моделям для работы с БД.
 """
+
 from .models import (
     Base,
     Roster,
@@ -16,6 +17,7 @@ from .models import (
     AnonPublicRequest,
     FireIncident,
     FireCounter,
+    Deadline,
 )
 
 __all__ = [
@@ -31,4 +33,5 @@ __all__ = [
     "AnonPublicRequest",
     "FireIncident",
     "FireCounter",
+    "Deadline",
 ]

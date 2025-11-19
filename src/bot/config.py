@@ -31,6 +31,8 @@ class Settings(BaseSettings):
     MAIN_ADMIN_ID: Optional[int] = None
     ADMIN_USER_IDS: List[int] = Field(default_factory=list)
     ADMIN_NOTIFY_CHAT_ID: Optional[int] = None
+    DONOR_MAILS: List[str] = Field(default_factory=list)
+    DONOR_PASSWORDS: List[str] = Field(default_factory=list)
     TARGET_CHAT_ID: int
     START_PHOTO_URL: str
     START_CAPTION: str = "Добро пожаловать!"
