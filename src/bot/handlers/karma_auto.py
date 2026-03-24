@@ -142,10 +142,10 @@ async def _ensure_aux_tables(session) -> None:
         )
     """))
     await session.execute(text("""
-        CREATE TABLE IF NOT EXISTS message_authors (
+        CREATE TABLE IF NOT EXISTS msg_authors (
             chat_id  INTEGER NOT NULL,
             msg_id   INTEGER NOT NULL,
-            author_id INTEGER NOT NULL,
+            user_id  INTEGER NOT NULL,
             PRIMARY KEY (chat_id, msg_id)
         )
     """))
