@@ -171,7 +171,7 @@ async def main():
     try:
         await dp.start_polling(bot, allowed_updates=allowed_updates)
     finally:
-        scheduler = dp.get("scheduler")
+        scheduler = dp.workflow_data.get("scheduler")
         if scheduler:
             scheduler.shutdown()
         await bot.session.close()

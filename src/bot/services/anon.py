@@ -7,7 +7,6 @@ Helper primitives for anonymous messaging flows:
 - text validation and user resolution.
 """
 
-import asyncio
 import random
 import string
 import time
@@ -91,7 +90,7 @@ async def resolve_user_identifier(raw: str) -> Optional[int]:
     if not candidate:
         return None
     if candidate.startswith("@"):
-        info = await asyncio.to_thread(UserInfoSource().get_user_info, candidate.lstrip("@"))
+        info = await UserInfoSource().get_user_info(candidate.lstrip("@"))
         if "id" not in info:
             raise ValueError("User not found")
         return int(info["id"])
