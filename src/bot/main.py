@@ -35,6 +35,7 @@ from bot.handlers.karma_auto import router as karma_auto_router
 
 from bot.utils.db import create_engine, create_session_factory
 from bot.utils.parse_deadlines import parse_deadlines
+from bot.utils.backup import send_db_backup
 from bot.models.models import Base
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -123,6 +124,15 @@ async def on_startup(dp: Dispatcher, bot: Bot, engine):
 
     scheduler.start()
     dp.workflow_data["scheduler"] = scheduler
+
+    # Ежедневный бэкап БД в 00:00 МСК
+    scheduler.add_job(
+        send_db_backup,
+        trigger=CronTrigger(hour=0, minute=0, timezone=ZoneInfo("Europe/Moscow")),
+        args=[bot],
+        id="daily_db_backup",
+        replace_existing=True,
+    )
 
     asyncio.create_task(parse_deadlines(session_maker))
 
