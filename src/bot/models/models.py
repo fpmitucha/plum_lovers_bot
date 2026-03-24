@@ -163,7 +163,6 @@ class Profile(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(BigInteger, index=True, unique=True, nullable=False)
     username = Column(String, nullable=True)
-    points = Column(Integer, nullable=False, server_default=sa_text("10"))
     eng_group = Column(String, nullable=True)
 
     created_at = Column(String, nullable=False, server_default=sa_text("(CURRENT_TIMESTAMP)"))
