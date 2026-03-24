@@ -147,7 +147,7 @@ async def cmd_whoami(message: Message, command: CommandObject) -> None:
         if command.args and command.args.strip():
             username_to_check = command.args.strip().lstrip("@")
             try:
-                user_info = UserInfoSource().get_user_info(username_to_check)
+                user_info = await UserInfoSource().get_user_info(username_to_check)
                 if not user_info or "id" not in user_info:
                     raise RuntimeError("User not found")
             except RuntimeError:

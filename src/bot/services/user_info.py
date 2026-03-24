@@ -1,7 +1,8 @@
-import http.client
 import json
 from html.parser import HTMLParser
 from typing import Dict, Iterable, Optional
+
+import httpx
 
 
 class _CsrfTokenParser(HTMLParser):
@@ -22,7 +23,7 @@ class _CsrfTokenParser(HTMLParser):
 
 
 class UserInfoSource:
-    HOST = 'tg-user.id'
+    BASE_URL = 'https://tg-user.id'
     API_PATH = '/api/get-userid'
     PROFILE_PATH_TEMPLATE = '/from/username/{username}'
     USER_AGENT = (
@@ -37,78 +38,61 @@ class UserInfoSource:
     )
     ACCEPT_JSON = '*/*'
     ACCEPT_LANGUAGE = 'en-GB,en-US;q=0.9,en;q=0.8,ru;q=0.7'
-    ORIGIN = 'https://tg-user.id'
     TIMEOUT = 10
 
-    def get_user_info(self, user_tag: str) -> dict:
+    async def get_user_info(self, user_tag: str) -> dict:
         profile_path = self.PROFILE_PATH_TEMPLATE.format(username=user_tag)
-        page_body, set_cookies = self._fetch_profile_page(profile_path)
-        csrf_token = self._extract_csrf_token(page_body)
-        if not csrf_token:
-            raise RuntimeError('Could not find CSRF token on tg-user.id profile page')
-        headers = self._build_post_headers(user_tag, csrf_token, set_cookies)
-        payload = json.dumps({'username': user_tag})
-        return self._perform_post(self.API_PATH, payload, headers)
+        async with httpx.AsyncClient(base_url=self.BASE_URL, timeout=self.TIMEOUT, follow_redirects=True) as client:
+            # Step 1: fetch the profile page to get CSRF token and cookies
+            resp = await client.get(
+                profile_path,
+                headers={
+                    'Accept': self.ACCEPT_HTML,
+                    'Accept-Language': self.ACCEPT_LANGUAGE,
+                    'DNT': '1',
+                    'Upgrade-Insecure-Requests': '1',
+                    'User-Agent': self.USER_AGENT,
+                },
+            )
+            if resp.status_code != 200:
+                raise RuntimeError(f'tg-user.id profile page request failed: {resp.status_code}')
 
-    def _fetch_profile_page(self, path: str) -> tuple[str, str]:
-        connection = http.client.HTTPSConnection(self.HOST, timeout=self.TIMEOUT)
-        headers = {
-            'Accept': self.ACCEPT_HTML,
-            'Accept-Language': self.ACCEPT_LANGUAGE,
-            'DNT': '1',
-            'Upgrade-Insecure-Requests': '1',
-            'User-Agent': self.USER_AGENT,
-        }
-        connection.request('GET', path, headers=headers)
-        response = connection.getresponse()
-        body_bytes = response.read()
-        set_cookie_header = self._collect_set_cookie_header(response.getheaders())
-        connection.close()
-        if response.status != 200:
-            raise RuntimeError(f'tg-user.id profile page request failed: {response.status}')
-        return body_bytes.decode('utf-8'), set_cookie_header
+            csrf_token = self._extract_csrf_token(resp.text)
+            if not csrf_token:
+                raise RuntimeError('Could not find CSRF token on tg-user.id profile page')
 
-    def _perform_post(self, path: str, payload: str, headers: Dict[str, str]) -> dict:
-        connection = http.client.HTTPSConnection(self.HOST, timeout=self.TIMEOUT)
-        connection.request('POST', path, body=payload, headers=headers)
-        response = connection.getresponse()
-        body_bytes = response.read()
-        connection.close()
-        if response.status != 200:
-            raise RuntimeError(f'tg-user.id API request failed: {response.status}')
-        return json.loads(body_bytes)
+            cookies = '; '.join(
+                f'{name}={value}' for name, value in resp.cookies.items()
+            )
 
-    def _build_post_headers(self, username: str, csrf_token: str, cookies: str) -> Dict[str, str]:
-        headers = {
-            'Accept': self.ACCEPT_JSON,
-            'Accept-Language': self.ACCEPT_LANGUAGE,
-            'Content-Type': 'application/json',
-            'DNT': '1',
-            'Origin': self.ORIGIN,
-            'Referer': f'{self.ORIGIN}/from/username/{username}',
-            'Sec-CH-UA': '"Google Chrome";v="141", "Not?A_Brand";v="8", "Chromium";v="141"',
-            'Sec-CH-UA-Mobile': '?0',
-            'Sec-CH-UA-Platform': '"macOS"',
-            'Sec-Fetch-Dest': 'empty',
-            'Sec-Fetch-Mode': 'cors',
-            'Sec-Fetch-Site': 'same-origin',
-            'User-Agent': self.USER_AGENT,
-            'X-CSRF-Token': csrf_token,
-        }
-        if cookies:
-            headers['Cookie'] = cookies
-        return headers
+            # Step 2: POST to the API to resolve user_id
+            post_resp = await client.post(
+                self.API_PATH,
+                content=json.dumps({'username': user_tag}),
+                headers={
+                    'Accept': self.ACCEPT_JSON,
+                    'Accept-Language': self.ACCEPT_LANGUAGE,
+                    'Content-Type': 'application/json',
+                    'DNT': '1',
+                    'Origin': self.BASE_URL,
+                    'Referer': f'{self.BASE_URL}/from/username/{user_tag}',
+                    'Sec-CH-UA': '"Google Chrome";v="141", "Not?A_Brand";v="8", "Chromium";v="141"',
+                    'Sec-CH-UA-Mobile': '?0',
+                    'Sec-CH-UA-Platform': '"macOS"',
+                    'Sec-Fetch-Dest': 'empty',
+                    'Sec-Fetch-Mode': 'cors',
+                    'Sec-Fetch-Site': 'same-origin',
+                    'User-Agent': self.USER_AGENT,
+                    'X-CSRF-Token': csrf_token,
+                    'Cookie': cookies,
+                },
+            )
+            if post_resp.status_code != 200:
+                raise RuntimeError(f'tg-user.id API request failed: {post_resp.status_code}')
+            return post_resp.json()
 
     @staticmethod
     def _extract_csrf_token(page_body: str) -> Optional[str]:
         parser = _CsrfTokenParser()
         parser.feed(page_body)
         return parser.token
-
-    @staticmethod
-    def _collect_set_cookie_header(headers: Iterable[tuple[str, str]]) -> str:
-        cookies = []
-        for name, value in headers:
-            if name.lower() == 'set-cookie' and value:
-                cookies.append(value.split(';', 1)[0])
-        return '; '.join(cookies)
