@@ -1,0 +1,18 @@
+[Unit]
+Description=Plum Lovers Platform API (FastAPI + uvicorn)
+After=network.target
+
+[Service]
+Type=simple
+# Укажи правильного пользователя и путь к проекту
+User=root
+WorkingDirectory=/root/plum_lovers_bot
+# Активируй виртуальное окружение бота (тот же venv, что и у бота)
+ExecStart=/home/bot/plum_lovers_bot/.venv/bin/python run_api.py
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

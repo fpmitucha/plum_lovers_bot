@@ -12,3 +12,6 @@ beautifulsoup4>=4.14.2
 requests>=2.32.3
 python-dateutil>=2.9.0.post0
 APScheduler>=3.11.1
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+python-multipart>=0.0.9
