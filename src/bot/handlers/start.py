@@ -126,6 +126,8 @@ _T = {
     "btn_gpt": {"ru": "⚡ Chat GPT 5", "en": "⚡ Chat GPT 5"},
     "btn_settings": {"ru": "⚙️ Настройки", "en": "⚙️ Settings"},
     "btn_back": {"ru": "⬅️ Назад", "en": "⬅️ Back"},
+    "btn_features": {"ru": "🗂 Функции", "en": "🗂 Features"},
+    "btn_link_platform": {"ru": "🔗 Подключить платформу", "en": "🔗 Connect platform"},
     # Помощь гостям
     "help_text": {
         "ru": (
@@ -237,13 +239,20 @@ def _user_menu_kb(lang: str) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     kb.button(text=_T["btn_profile"][lang], callback_data=CabCB(action="open").pack())
     kb.button(text=_T["btn_rules"][lang], callback_data=StartCB(action="rules", value=lang).pack())
+    kb.button(text=_T["btn_features"][lang], callback_data=StartCB(action="features", value=lang).pack())
+    kb.button(text=_T["btn_help"][lang], callback_data=StartCB(action="help", value=lang).pack())
+    kb.button(text=_T["btn_link_platform"][lang], callback_data=StartCB(action="link_platform", value=lang).pack())
+    kb.adjust(2, 2, 1)
+    return kb.as_markup()
+
+
+def _features_kb(lang: str) -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
     kb.button(text=_T["btn_a2t"][lang], callback_data=StartCB(action="a2t", value=lang).pack())
     kb.button(text=_T["btn_gpt"][lang], callback_data=StartCB(action="gpt", value=lang).pack())
-    kb.button(text=_T["btn_help"][lang], callback_data=StartCB(action="help", value=lang).pack())
-    kb.button(
-        text=_T["btn_settings"][lang], callback_data=SettingsCB(action="open", value=lang).pack()
-    )
-    kb.adjust(2, 2, 2)
+    kb.button(text=_T["btn_settings"][lang], callback_data=SettingsCB(action="open", value=lang).pack())
+    kb.button(text=_T["btn_back"][lang], callback_data=StartCB(action="back", value=lang).pack())
+    kb.adjust(2, 1, 1)
     return kb.as_markup()
 
 
@@ -760,6 +769,102 @@ async def on_placeholders(cb: CallbackQuery, callback_data: StartCB) -> None:
         parse_mode=ParseMode.HTML,
     )
 
+    try:
+        await cb.message.edit_media(media=media, reply_markup=_back_kb(lang))
+    except Exception:
+        await _answer_photo_or_text(cb.message, media, _back_kb(lang))
+        with contextlib.suppress(Exception):
+            await cb.message.delete()
+    with contextlib.suppress(TelegramBadRequest):
+        await cb.answer()
+
+
+@router.callback_query(StartCB.filter(F.action == "features"))
+async def on_features(cb: CallbackQuery, callback_data: StartCB) -> None:
+    lang = (callback_data.value or get_lang(cb.from_user.id) or "ru").lower()
+    caption = {
+        "ru": "🗂 <b>Функции</b>\n\nВыбери нужный инструмент:",
+        "en": "🗂 <b>Features</b>\n\nChoose a tool:",
+    }[lang]
+    media = InputMediaPhoto(
+        media=_resolve_photo_source(SET_BANNER),
+        caption=caption,
+        parse_mode=ParseMode.HTML,
+    )
+    try:
+        await cb.message.edit_media(media=media, reply_markup=_features_kb(lang))
+    except Exception:
+        await _answer_photo_or_text(cb.message, media, _features_kb(lang))
+        with contextlib.suppress(Exception):
+            await cb.message.delete()
+    with contextlib.suppress(TelegramBadRequest):
+        await cb.answer()
+
+
+@router.callback_query(StartCB.filter(F.action == "link_platform"))
+async def on_link_platform(
+    cb: CallbackQuery, callback_data: StartCB, session_maker: async_sessionmaker[AsyncSession]
+) -> None:
+    import random
+    from datetime import datetime, timezone
+
+    lang = (callback_data.value or get_lang(cb.from_user.id) or "ru").lower()
+    code = str(random.randint(100000, 999999))
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+
+    async with session_maker() as s:
+        await s.execute(
+            sql_text("""
+            CREATE TABLE IF NOT EXISTS platform_link_tokens (
+                code TEXT PRIMARY KEY,
+                tg_user_id INTEGER NOT NULL,
+                tg_username TEXT,
+                created_at TEXT NOT NULL,
+                used INTEGER DEFAULT 0
+            )
+        """)
+        )
+        # Удаляем старые коды этого пользователя
+        await s.execute(
+            sql_text("DELETE FROM platform_link_tokens WHERE tg_user_id = :uid"),
+            {"uid": cb.from_user.id},
+        )
+        await s.execute(
+            sql_text(
+                "INSERT INTO platform_link_tokens (code, tg_user_id, tg_username, created_at) "
+                "VALUES (:code, :uid, :uname, :ts)"
+            ),
+            {
+                "code": code,
+                "uid": cb.from_user.id,
+                "uname": cb.from_user.username or "",
+                "ts": now,
+            },
+        )
+        await s.commit()
+
+    caption_ru = (
+        f"🔗 <b>Подключение платформы</b>\n\n"
+        f"Твой код подключения:\n\n"
+        f"<code>{code}</code>\n\n"
+        f"Введи его на <b>plumgang.ru</b> в разделе\n"
+        f"<b>Профиль → Привязать Telegram</b>\n\n"
+        f"⏱ Код действует <b>15 минут</b>."
+    )
+    caption_en = (
+        f"🔗 <b>Connect Platform</b>\n\n"
+        f"Your connection code:\n\n"
+        f"<code>{code}</code>\n\n"
+        f"Enter it on <b>plumgang.ru</b> in\n"
+        f"<b>Profile → Link Telegram</b>\n\n"
+        f"⏱ Code valid for <b>15 minutes</b>."
+    )
+    caption = caption_ru if lang == "ru" else caption_en
+    media = InputMediaPhoto(
+        media=_resolve_photo_source(SET_BANNER),
+        caption=caption,
+        parse_mode=ParseMode.HTML,
+    )
     try:
         await cb.message.edit_media(media=media, reply_markup=_back_kb(lang))
     except Exception:
