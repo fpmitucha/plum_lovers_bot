@@ -193,24 +193,27 @@ class AuthResponse(BaseModel):
 
 
 async def _get_karma_rank(db: AsyncSession, tg_id: int) -> tuple[int, int]:
-    karma_row = await db.execute(
-        sql_text_api("SELECT COALESCE(SUM(value), 0) as total FROM karma_log WHERE target_id = :uid"),
-        {"uid": tg_id},
-    )
-    karma_data = karma_row.fetchone()
-    karma = int(karma_data.total) if karma_data else 0
+    try:
+        karma_row = await db.execute(
+            sql_text_api("SELECT COALESCE(SUM(value), 0) as total FROM karma_log WHERE target_id = :uid"),
+            {"uid": tg_id},
+        )
+        karma_data = karma_row.fetchone()
+        karma = int(karma_data.total) if karma_data else 0
 
-    rank_row = await db.execute(
-        sql_text_api("""
-            SELECT COUNT(*) + 1 as rank FROM profiles
-            WHERE (SELECT COALESCE(SUM(value), 0) FROM karma_log WHERE target_id = user_id)
-            > (SELECT COALESCE(SUM(value), 0) FROM karma_log WHERE target_id = :uid)
-        """),
-        {"uid": tg_id},
-    )
-    rank_data = rank_row.fetchone()
-    rank = int(rank_data.rank) if rank_data else 0
-    return karma, rank
+        rank_row = await db.execute(
+            sql_text_api("""
+                SELECT COUNT(*) + 1 as rank FROM profiles
+                WHERE (SELECT COALESCE(SUM(value), 0) FROM karma_log WHERE target_id = user_id)
+                > (SELECT COALESCE(SUM(value), 0) FROM karma_log WHERE target_id = :uid)
+            """),
+            {"uid": tg_id},
+        )
+        rank_data = rank_row.fetchone()
+        rank = int(rank_data.rank) if rank_data else 0
+        return karma, rank
+    except Exception:
+        return 0, 0
 
 
 @app.post("/api/auth/magic-login", response_model=AuthResponse, summary="Автовход по токену из бота")
