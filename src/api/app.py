@@ -5,15 +5,16 @@ FastAPI-приложение для платформы.
 SQLAlchemy-модели и ту же базу данных (bot.db).
 
 Эндпоинты:
-  GET /api/me         — профиль текущего пользователя (по initData)
-  GET /api/deadlines  — список ближайших дедлайнов
+  GET  /api/me              — профиль текущего пользователя (по initData)
+  GET  /api/deadlines       — список ближайших дедлайнов
+  POST /api/avatar/upload   — загрузка аватарки в S3
 """
 
 from datetime import datetime, timezone
 
-from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, status
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import select
+from sqlalchemy import select, text as sa_text_migrate
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from bot.config import settings
@@ -46,11 +47,25 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    # Разрешаем запросы с любого origin (Telegram WebApp открывается с telegram.org)
     allow_origins=["*"],
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
+
+
+# ---------------------------------------------------------------------------
+# DB migration: добавить avatar_url в profiles, если колонки нет
+# ---------------------------------------------------------------------------
+@app.on_event("startup")
+async def _migrate_avatar_column():
+    async with _engine.begin() as conn:
+        # Проверяем, есть ли колонка avatar_url
+        result = await conn.execute(sa_text_migrate("PRAGMA table_info(profiles)"))
+        columns = [row[1] for row in result.fetchall()]
+        if "avatar_url" not in columns:
+            await conn.execute(sa_text_migrate(
+                "ALTER TABLE profiles ADD COLUMN avatar_url TEXT"
+            ))
 
 
 # ---------------------------------------------------------------------------
@@ -83,6 +98,7 @@ async def get_me(
         telegram_id=profile.user_id,
         username=profile.username,
         eng_group=profile.eng_group,
+        avatar_url=profile.avatar_url,
     )
 
 
@@ -192,6 +208,7 @@ class TgProfileOut(BaseModel):
     tg_username: str
     karma: int
     rank: int
+    avatar_url: str | None = None
 
 
 @app.get("/api/user-by-tg-id", response_model=TgProfileOut, summary="Get TG profile by ID")
@@ -204,7 +221,7 @@ async def get_user_by_tg_id(
     Used by the web platform after account linking.
     """
     result = await db.execute(
-        sql_text_api("SELECT user_id, username FROM profiles WHERE user_id = :uid"),
+        sql_text_api("SELECT user_id, username, avatar_url FROM profiles WHERE user_id = :uid"),
         {"uid": tg_id},
     )
     row = result.fetchone()
@@ -236,4 +253,46 @@ async def get_user_by_tg_id(
         tg_username=row.username or "",
         karma=karma,
         rank=rank,
+        avatar_url=row.avatar_url,
     )
+
+
+# ---------------------------------------------------------------------------
+# Avatar upload
+# ---------------------------------------------------------------------------
+
+from api.s3 import upload_avatar, validate_avatar
+
+
+class AvatarUploadResponse(BaseModel):
+    avatar_url: str
+
+
+@app.post("/api/avatar/upload", response_model=AvatarUploadResponse, summary="Загрузить аватарку")
+async def upload_avatar_endpoint(
+    file: UploadFile = File(...),
+    tg_user: dict = Depends(get_telegram_user),
+    db: AsyncSession = Depends(get_db),
+) -> AvatarUploadResponse:
+    """
+    Принимает изображение (JPEG/PNG/WebP/GIF, до 2 MB),
+    ресайзит до 256×256, загружает в S3 как WebP.
+    Обновляет avatar_url в профиле пользователя.
+    """
+    raw_bytes = await file.read()
+
+    err = validate_avatar(file.content_type, len(raw_bytes))
+    if err:
+        raise HTTPException(status_code=400, detail=err)
+
+    telegram_id: int = tg_user["id"]
+    avatar_url = upload_avatar(raw_bytes, telegram_id)
+
+    # Обновить avatar_url в БД
+    await db.execute(
+        sql_text_api("UPDATE profiles SET avatar_url = :url WHERE user_id = :uid"),
+        {"url": avatar_url, "uid": telegram_id},
+    )
+    await db.commit()
+
+    return AvatarUploadResponse(avatar_url=avatar_url)

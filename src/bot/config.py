@@ -9,6 +9,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import List, Optional
 
 
+
 class Settings(BaseSettings):
     """
     Настройки бота, загружаемые из окружения.
@@ -39,6 +40,12 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "sqlite+aiosqlite:///./bot.db"
     ROSTER_SEED_FILE: Optional[str] = None
     RULES_URL: str
+
+    # S3 (Timeweb) — для загрузки аватарок
+    S3_ENDPOINT_URL: Optional[str] = None
+    S3_ACCESS_KEY: Optional[str] = None
+    S3_SECRET_KEY: Optional[str] = None
+    S3_BUCKET_NAME: str = "plum-avatars"
 
 
 settings = Settings()

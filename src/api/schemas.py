@@ -11,8 +11,7 @@ class ProfileOut(BaseModel):
     telegram_id: int
     username: str | None = None
     eng_group: str | None = None
-    # Поля для будущего расширения (пока нет в модели)
-    # points: int = 0
+    avatar_url: str | None = None
 
     model_config = {"from_attributes": True}
 

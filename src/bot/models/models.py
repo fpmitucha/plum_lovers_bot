@@ -164,6 +164,7 @@ class Profile(Base):
     user_id = Column(BigInteger, index=True, unique=True, nullable=False)
     username = Column(String, nullable=True)
     eng_group = Column(String, nullable=True)
+    avatar_url = Column(String, nullable=True)
 
     created_at = Column(String, nullable=False, server_default=sa_text("(CURRENT_TIMESTAMP)"))
     updated_at = Column(String, nullable=False, server_default=sa_text("(CURRENT_TIMESTAMP)"))
