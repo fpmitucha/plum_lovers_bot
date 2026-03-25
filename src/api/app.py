@@ -181,3 +181,59 @@ async def verify_link_code(
         tg_user_id=row.tg_user_id,
         tg_username=row.tg_username or "",
     )
+
+
+# ---------------------------------------------------------------------------
+# Public profile by TG ID (after linking, no initData needed)
+# ---------------------------------------------------------------------------
+
+class TgProfileOut(BaseModel):
+    tg_user_id: int
+    tg_username: str
+    karma: int
+    rank: int
+
+
+@app.get("/api/user-by-tg-id", response_model=TgProfileOut, summary="Get TG profile by ID")
+async def get_user_by_tg_id(
+    tg_id: int,
+    db: AsyncSession = Depends(get_db),
+) -> TgProfileOut:
+    """
+    Returns karma and rank for a given Telegram user ID.
+    Used by the web platform after account linking.
+    """
+    result = await db.execute(
+        sql_text_api("SELECT user_id, username FROM profiles WHERE user_id = :uid"),
+        {"uid": tg_id},
+    )
+    row = result.fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Пользователь не найден в боте")
+
+    # Get karma
+    karma_row = await db.execute(
+        sql_text_api("SELECT COALESCE(SUM(value), 0) as total FROM karma_log WHERE target_id = :uid"),
+        {"uid": tg_id},
+    )
+    karma_data = karma_row.fetchone()
+    karma = int(karma_data.total) if karma_data else 0
+
+    # Get rank
+    rank_row = await db.execute(
+        sql_text_api("""
+            SELECT COUNT(*) + 1 as rank FROM profiles
+            WHERE (SELECT COALESCE(SUM(value), 0) FROM karma_log WHERE target_id = user_id)
+            > (SELECT COALESCE(SUM(value), 0) FROM karma_log WHERE target_id = :uid)
+        """),
+        {"uid": tg_id},
+    )
+    rank_data = rank_row.fetchone()
+    rank = int(rank_data.rank) if rank_data else 0
+
+    return TgProfileOut(
+        tg_user_id=tg_id,
+        tg_username=row.username or "",
+        karma=karma,
+        rank=rank,
+    )
