@@ -318,7 +318,12 @@ async def auth_login(
     if cred_row is None:
         raise HTTPException(status_code=401, detail="Неверный логин или пароль")
 
-    if _hash_password(body.password) != cred_row.password_hash:
+    computed_hash = _hash_password(body.password)
+    stored_hash = cred_row.password_hash
+    import logging
+    logging.warning(f"AUTH DEBUG: login={body.login}, computed={computed_hash[:16]}..., stored={stored_hash[:16]}..., match={computed_hash == stored_hash}")
+
+    if computed_hash != stored_hash:
         raise HTTPException(status_code=401, detail="Неверный логин или пароль")
 
     tg_id = cred_row.tg_user_id
