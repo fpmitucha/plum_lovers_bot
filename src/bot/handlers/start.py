@@ -805,11 +805,54 @@ async def on_features(cb: CallbackQuery, callback_data: StartCB) -> None:
 async def on_link_platform(
     cb: CallbackQuery, callback_data: StartCB, session_maker: async_sessionmaker[AsyncSession]
 ) -> None:
-    import random
+    import uuid
     from datetime import datetime, timezone
 
     lang = (callback_data.value or get_lang(cb.from_user.id) or "ru").lower()
-    code = str(random.randint(100000, 999999))
+
+    async with session_maker() as s:
+        # Проверяем, не подключена ли уже платформа
+        already = await s.execute(
+            sql_text("SELECT login FROM web_credentials WHERE tg_user_id = :uid"),
+            {"uid": cb.from_user.id},
+        )
+        already_row = already.fetchone()
+
+    if already_row:
+        caption_ru = (
+            "🔗 <b>Платформа уже подключена</b>\n\n"
+            f"Твой логин: <code>{already_row.login}</code>\n\n"
+            "Забыл пароль? Нажми /resetpassword\n"
+            "Или открой платформу заново:"
+        )
+        caption_en = (
+            "🔗 <b>Platform already connected</b>\n\n"
+            f"Your login: <code>{already_row.login}</code>\n\n"
+            "Forgot password? Use /resetpassword\n"
+            "Or open the platform:"
+        )
+        caption = caption_ru if lang == "ru" else caption_en
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🌐 Открыть платформу" if lang == "ru" else "🌐 Open platform",
+                                  url="https://plumgang.ru")],
+            [InlineKeyboardButton(text=_T["btn_back"][lang],
+                                  callback_data=StartCB(action="back", value=lang).pack())],
+        ])
+        media = InputMediaPhoto(
+            media=_resolve_photo_source(SET_BANNER), caption=caption, parse_mode=ParseMode.HTML,
+        )
+        try:
+            await cb.message.edit_media(media=media, reply_markup=kb)
+        except Exception:
+            await _answer_photo_or_text(cb.message, media, kb)
+            with contextlib.suppress(Exception):
+                await cb.message.delete()
+        with contextlib.suppress(TelegramBadRequest):
+            await cb.answer()
+        return
+
+    # Генерируем UUID-токен
+    token = str(uuid.uuid4())
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
 
     async with session_maker() as s:
@@ -835,7 +878,7 @@ async def on_link_platform(
                 "VALUES (:code, :uid, :uname, :ts)"
             ),
             {
-                "code": code,
+                "code": token,
                 "uid": cb.from_user.id,
                 "uname": cb.from_user.username or "",
                 "ts": now,
@@ -843,36 +886,92 @@ async def on_link_platform(
         )
         await s.commit()
 
+    link_url = f"https://plumgang.ru/auth?token={token}"
+
     caption_ru = (
         f"🔗 <b>Подключение платформы</b>\n\n"
-        f"Твой код подключения:\n\n"
-        f"<code>{code}</code>\n\n"
-        f"Введи его на <b>plumgang.ru</b> в разделе\n"
-        f"<b>Профиль → Привязать Telegram</b>\n\n"
-        f"⏱ Код действует <b>15 минут</b>."
+        f"Нажми кнопку ниже, чтобы войти на платформу.\n"
+        f"Логин и пароль будут созданы автоматически.\n\n"
+        f"⏱ Ссылка действует <b>15 минут</b>."
     )
     caption_en = (
         f"🔗 <b>Connect Platform</b>\n\n"
-        f"Your connection code:\n\n"
-        f"<code>{code}</code>\n\n"
-        f"Enter it on <b>plumgang.ru</b> in\n"
-        f"<b>Profile → Link Telegram</b>\n\n"
-        f"⏱ Code valid for <b>15 minutes</b>."
+        f"Press the button below to log in.\n"
+        f"Login and password will be created automatically.\n\n"
+        f"⏱ Link valid for <b>15 minutes</b>."
     )
     caption = caption_ru if lang == "ru" else caption_en
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🌐 Войти на платформу" if lang == "ru" else "🌐 Open platform",
+                              url=link_url)],
+        [InlineKeyboardButton(text=_T["btn_back"][lang],
+                              callback_data=StartCB(action="back", value=lang).pack())],
+    ])
+
     media = InputMediaPhoto(
         media=_resolve_photo_source(SET_BANNER),
         caption=caption,
         parse_mode=ParseMode.HTML,
     )
     try:
-        await cb.message.edit_media(media=media, reply_markup=_back_kb(lang))
+        await cb.message.edit_media(media=media, reply_markup=kb)
     except Exception:
-        await _answer_photo_or_text(cb.message, media, _back_kb(lang))
+        await _answer_photo_or_text(cb.message, media, kb)
         with contextlib.suppress(Exception):
             await cb.message.delete()
     with contextlib.suppress(TelegramBadRequest):
         await cb.answer()
+
+
+@router.message(Command("resetpassword"))
+async def cmd_reset_password(message: Message, session_maker: async_sessionmaker[AsyncSession]) -> None:
+    """Сброс пароля платформы — генерирует новый случайный пароль."""
+    import hashlib
+    import secrets
+    import string
+
+    lang = (get_lang(message.from_user.id) or "ru").lower()
+
+    async with session_maker() as s:
+        cred = await s.execute(
+            sql_text("SELECT login FROM web_credentials WHERE tg_user_id = :uid"),
+            {"uid": message.from_user.id},
+        )
+        cred_row = cred.fetchone()
+        if cred_row is None:
+            no_account = {
+                "ru": "❌ У тебя нет аккаунта на платформе. Сначала подключи через кнопку «Подключить платформу».",
+                "en": "❌ You don't have a platform account. Connect first via «Connect platform» button.",
+            }
+            await message.answer(no_account[lang])
+            return
+
+        alphabet = string.ascii_letters + string.digits
+        new_password = ''.join(secrets.choice(alphabet) for _ in range(8))
+        password_hash = hashlib.sha256(new_password.encode()).hexdigest()
+
+        await s.execute(
+            sql_text("UPDATE web_credentials SET password_hash = :phash WHERE tg_user_id = :uid"),
+            {"phash": password_hash, "uid": message.from_user.id},
+        )
+        await s.commit()
+
+    msg = {
+        "ru": (
+            f"🔑 <b>Пароль сброшен!</b>\n\n"
+            f"Логин: <code>{cred_row.login}</code>\n"
+            f"Новый пароль: <code>{new_password}</code>\n\n"
+            f"Используй эти данные для входа на <b>plumgang.ru</b>"
+        ),
+        "en": (
+            f"🔑 <b>Password reset!</b>\n\n"
+            f"Login: <code>{cred_row.login}</code>\n"
+            f"New password: <code>{new_password}</code>\n\n"
+            f"Use these to log in at <b>plumgang.ru</b>"
+        ),
+    }
+    await message.answer(msg[lang], parse_mode=ParseMode.HTML)
 
 
 @router.callback_query(StartCB.filter(F.action == "back"))
