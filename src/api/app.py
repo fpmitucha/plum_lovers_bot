@@ -18,7 +18,7 @@ import secrets
 import string
 from datetime import datetime, timezone
 
-from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, status
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Header, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select, text as sa_text_migrate
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -195,7 +195,7 @@ class AuthResponse(BaseModel):
 async def _get_karma_rank(db: AsyncSession, tg_id: int) -> tuple[int, int]:
     try:
         karma_row = await db.execute(
-            sql_text_api("SELECT COALESCE(SUM(value), 0) as total FROM karma_log WHERE target_id = :uid"),
+            sql_text_api("SELECT COALESCE(karma, 0) as total FROM profiles WHERE user_id = :uid"),
             {"uid": tg_id},
         )
         karma_data = karma_row.fetchone()
@@ -204,8 +204,7 @@ async def _get_karma_rank(db: AsyncSession, tg_id: int) -> tuple[int, int]:
         rank_row = await db.execute(
             sql_text_api("""
                 SELECT COUNT(*) + 1 as rank FROM profiles
-                WHERE (SELECT COALESCE(SUM(value), 0) FROM karma_log WHERE target_id = user_id)
-                > (SELECT COALESCE(SUM(value), 0) FROM karma_log WHERE target_id = :uid)
+                WHERE COALESCE(karma, 0) > (SELECT COALESCE(karma, 0) FROM profiles WHERE user_id = :uid)
             """),
             {"uid": tg_id},
         )
@@ -425,21 +424,41 @@ class AvatarUploadResponse(BaseModel):
 @app.post("/api/avatar/upload", response_model=AvatarUploadResponse, summary="Загрузить аватарку")
 async def upload_avatar_endpoint(
     file: UploadFile = File(...),
-    tg_user: dict = Depends(get_telegram_user),
+    x_login: str | None = Header(None, alias="X-Login"),
+    x_telegram_init_data: str | None = Header(None, alias="X-Telegram-Init-Data"),
     db: AsyncSession = Depends(get_db),
 ) -> AvatarUploadResponse:
     """
     Принимает изображение (JPEG/PNG/WebP/GIF, до 2 MB),
     ресайзит до 256×256, загружает в S3 как WebP.
     Обновляет avatar_url в профиле пользователя.
+    Авторизация: X-Login header (логин из web_credentials) или X-Telegram-Init-Data.
     """
+    telegram_id: int | None = None
+
+    # Авторизация по логину
+    if x_login:
+        cred = await db.execute(
+            sql_text_api("SELECT tg_user_id FROM web_credentials WHERE login = :login"),
+            {"login": x_login.strip()},
+        )
+        cred_row = cred.fetchone()
+        if cred_row is None:
+            raise HTTPException(status_code=401, detail="Неизвестный логин")
+        telegram_id = cred_row.tg_user_id
+    elif x_telegram_init_data:
+        from api.auth import verify_telegram_init_data
+        tg_user = verify_telegram_init_data(x_telegram_init_data)
+        telegram_id = tg_user["id"]
+    else:
+        raise HTTPException(status_code=401, detail="Требуется авторизация")
+
     raw_bytes = await file.read()
 
     err = validate_avatar(file.content_type, len(raw_bytes))
     if err:
         raise HTTPException(status_code=400, detail=err)
 
-    telegram_id: int = tg_user["id"]
     avatar_url = upload_avatar(raw_bytes, telegram_id)
 
     # Обновить avatar_url в БД
@@ -450,3 +469,42 @@ async def upload_avatar_endpoint(
     await db.commit()
 
     return AvatarUploadResponse(avatar_url=avatar_url)
+
+
+# ---------------------------------------------------------------------------
+# Leaderboard
+# ---------------------------------------------------------------------------
+
+class LeaderboardEntry(BaseModel):
+    username: str
+    karma: int
+    rank: int
+    avatar_url: str | None = None
+    tg_user_id: int
+
+
+@app.get("/api/leaderboard", response_model=list[LeaderboardEntry], summary="Топ по карме")
+async def get_leaderboard(
+    limit: int = 50,
+    db: AsyncSession = Depends(get_db),
+) -> list[LeaderboardEntry]:
+    result = await db.execute(
+        sql_text_api("""
+            SELECT user_id, username, COALESCE(karma, 0) as karma, avatar_url
+            FROM profiles
+            ORDER BY karma DESC
+            LIMIT :lim
+        """),
+        {"lim": limit},
+    )
+    rows = result.fetchall()
+    return [
+        LeaderboardEntry(
+            tg_user_id=row.user_id,
+            username=row.username or "",
+            karma=row.karma,
+            rank=i + 1,
+            avatar_url=row.avatar_url,
+        )
+        for i, row in enumerate(rows)
+    ]
