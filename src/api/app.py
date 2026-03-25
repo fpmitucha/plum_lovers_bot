@@ -379,6 +379,33 @@ async def change_password(
     return {"ok": True}
 
 
+class BotResetPasswordRequest(BaseModel):
+    tg_user_id: int
+
+
+@app.post("/api/auth/bot-reset-password", summary="Сброс пароля (вызывается ботом)")
+async def bot_reset_password(
+    body: BotResetPasswordRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Генерирует новый пароль и сохраняет его хеш. Используется ботом через HTTP."""
+    cred = await db.execute(
+        sql_text_api("SELECT login FROM web_credentials WHERE tg_user_id = :uid"),
+        {"uid": body.tg_user_id},
+    )
+    cred_row = cred.fetchone()
+    if cred_row is None:
+        raise HTTPException(status_code=404, detail="Аккаунт не найден")
+
+    new_password = _generate_password()
+    await db.execute(
+        sql_text_api("UPDATE web_credentials SET password_hash = :phash WHERE tg_user_id = :uid"),
+        {"phash": _hash_password(new_password), "uid": body.tg_user_id},
+    )
+    await db.commit()
+    return {"login": cred_row.login, "password": new_password}
+
+
 # ---------------------------------------------------------------------------
 # Public profile by TG ID (after linking, no initData needed)
 # ---------------------------------------------------------------------------

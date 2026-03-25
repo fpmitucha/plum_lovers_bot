@@ -926,47 +926,42 @@ async def on_link_platform(
 
 @router.message(Command("resetpassword"))
 async def cmd_reset_password(message: Message, session_maker: async_sessionmaker[AsyncSession]) -> None:
-    """Сброс пароля платформы — генерирует новый случайный пароль."""
-    import hashlib
-    import secrets
-    import string
+    """Сброс пароля платформы — вызывает API для генерации нового пароля."""
+    import aiohttp
 
     lang = (get_lang(message.from_user.id) or "ru").lower()
 
-    async with session_maker() as s:
-        cred = await s.execute(
-            sql_text("SELECT login FROM web_credentials WHERE tg_user_id = :uid"),
-            {"uid": message.from_user.id},
-        )
-        cred_row = cred.fetchone()
-        if cred_row is None:
-            no_account = {
-                "ru": "❌ У тебя нет аккаунта на платформе. Сначала подключи через кнопку «Подключить платформу».",
-                "en": "❌ You don't have a platform account. Connect first via «Connect platform» button.",
-            }
-            await message.answer(no_account[lang])
-            return
+    try:
+        async with aiohttp.ClientSession() as http_session:
+            async with http_session.post(
+                "http://localhost:8080/api/auth/bot-reset-password",
+                json={"tg_user_id": message.from_user.id},
+            ) as resp:
+                if resp.status == 404:
+                    no_account = {
+                        "ru": "❌ У тебя нет аккаунта на платформе. Сначала подключи через кнопку «Подключить платформу».",
+                        "en": "❌ You don't have a platform account. Connect first via «Connect platform» button.",
+                    }
+                    await message.answer(no_account[lang])
+                    return
 
-        alphabet = string.ascii_letters + string.digits
-        new_password = ''.join(secrets.choice(alphabet) for _ in range(8))
-        password_hash = hashlib.sha256(new_password.encode()).hexdigest()
-
-        await s.execute(
-            sql_text("UPDATE web_credentials SET password_hash = :phash WHERE tg_user_id = :uid"),
-            {"phash": password_hash, "uid": message.from_user.id},
-        )
-        await s.commit()
+                data = await resp.json()
+                login = data["login"]
+                new_password = data["password"]
+    except Exception as e:
+        await message.answer(f"❌ Ошибка сброса пароля: {e}")
+        return
 
     msg = {
         "ru": (
             f"🔑 <b>Пароль сброшен!</b>\n\n"
-            f"Логин: <code>{cred_row.login}</code>\n"
+            f"Логин: <code>{login}</code>\n"
             f"Новый пароль: <code>{new_password}</code>\n\n"
             f"Используй эти данные для входа на <b>plumgang.ru</b>"
         ),
         "en": (
             f"🔑 <b>Password reset!</b>\n\n"
-            f"Login: <code>{cred_row.login}</code>\n"
+            f"Login: <code>{login}</code>\n"
             f"New password: <code>{new_password}</code>\n\n"
             f"Use these to log in at <b>plumgang.ru</b>"
         ),
