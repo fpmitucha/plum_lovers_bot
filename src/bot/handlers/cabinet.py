@@ -48,6 +48,8 @@ _T = {
     "btn_a2t":     {"ru": "🔊 Аудио в текст", "en": "🔊 Audio to text"},
     "btn_gpt":     {"ru": "⚡ Chat GPT 5",    "en": "⚡ Chat GPT 5"},
     "btn_settings":{"ru": "⚙️ Настройки",     "en": "⚙️ Settings"},
+    "btn_features":{"ru": "🗂 Функции",      "en": "🗂 Features"},
+    "btn_link_platform": {"ru": "🔗 Подключить платформу", "en": "🔗 Connect platform"},
 }
 
 def _back_menu(lang: str) -> InlineKeyboardMarkup:
@@ -66,13 +68,12 @@ def _guest_menu_kb(lang: str) -> InlineKeyboardMarkup:
 
 def _user_menu_kb(lang: str) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
-    kb.button(text=_T["btn_profile"][lang], callback_data=CabCB(action="open").pack())
-    kb.button(text=_T["btn_rules"][lang],   callback_data="start:rules:" + lang)
-    kb.button(text=_T["btn_a2t"][lang],     callback_data="start:a2t:"   + lang)
-    kb.button(text=_T["btn_gpt"][lang],     callback_data="start:gpt:"   + lang)
-    kb.button(text=_T["btn_help"][lang],    callback_data="start:help:"  + lang)
-    kb.button(text=_T["btn_settings"][lang],callback_data="start:settings:" + lang)
-    kb.adjust(2, 2, 2)
+    kb.button(text=_T["btn_profile"][lang],       callback_data=CabCB(action="open").pack())
+    kb.button(text=_T["btn_rules"][lang],         callback_data="start:rules:"  + lang)
+    kb.button(text=_T["btn_features"][lang],      callback_data="start:features:" + lang)
+    kb.button(text=_T["btn_help"][lang],          callback_data="start:help:"   + lang)
+    kb.button(text=_T["btn_link_platform"][lang], callback_data="start:link_platform:" + lang)
+    kb.adjust(2, 2, 1)
     return kb.as_markup()
 
 async def _is_registered_and_ensure_profile(repo: Repo, user_id: int, username: str | None) -> bool:
